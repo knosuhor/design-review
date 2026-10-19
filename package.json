@@ -1,0 +1,20 @@
+{
+  "name": "design-review",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aplikacja do komentowania designu stron HTML - upload ZIP, udostępnianie linkiem, komentarze jako pinezki lub zakreślenia tekstu.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node scripts/smoke-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "express": "^4.21.2",
+    "multer": "^2.0.2"
+  }
+}

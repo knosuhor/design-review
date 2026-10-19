@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recenzja – Design Review</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M10 9h12v9H15l-4 4z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="viewer">
+
+<div class="viewer-shell">
+
+  <header class="viewer-bar">
+    <a class="btn ghost" id="home-link" href="/" title="Wróć do listy stron" aria-label="Wszystkie strony">
+      <span class="btn-ico" id="home-ico" aria-hidden="true">←</span>
+      <span class="btn-label" id="home-label">Wszystkie strony</span>
+    </a>
+    <div class="viewer-title">
+      <div class="t" id="project-name">Wczytywanie…</div>
+      <div class="s" id="project-meta"></div>
+    </div>
+    <button class="btn toggle-pin" id="pin-toggle" type="button" disabled
+            title="Kliknij w dowolnym miejscu strony, aby dodać pinezkę" aria-label="Tryb pinezki">
+      <span class="btn-ico" id="pin-ico" aria-hidden="true">📌</span>
+      <span class="btn-label" id="pin-label">Tryb pinezki</span>
+    </button>
+    <span class="bar-hint">Zaznacz tekst, aby komentować</span>
+    <button class="btn" id="copy-share" type="button" title="Kopiuj link do udostępniania"
+            aria-label="Kopiuj link do udostępniania">
+      <span class="btn-ico" aria-hidden="true">🔗</span>
+      <span class="btn-label">Kopiuj link</span>
+    </button>
+    <a class="btn" id="download-zip" href="#" hidden title="Pobierz pliki projektu jako archiwum ZIP (bez komentarzy)"
+       aria-label="Pobierz projekt jako ZIP">
+      <span class="btn-ico" aria-hidden="true">⬇</span>
+      <span class="btn-label">ZIP</span>
+    </a>
+    <a class="btn" id="open-new" href="#" target="_blank" rel="noopener" title="Otwórz samą stronę w nowej karcie"
+       aria-label="Otwórz samą stronę w nowej karcie">
+      <span class="btn-ico" aria-hidden="true">↗</span>
+      <span class="btn-label">Podgląd</span>
+    </a>
+  </header>
+
+  <div class="viewer-body">
+    <div class="stage" id="stage">
+      <iframe id="preview" title="Podgląd recenzowanej strony"></iframe>
+      <div class="stage-loader" id="loader">
+        <div>
+          <div class="spinner"></div>
+          <div style="margin-top:.5rem">Wczytywanie strony…</div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>Komentarze</h2>
+        <span class="count" id="comment-count">0</span>
+        <div class="spacer"></div>
+        <button class="btn ghost small" type="button" id="resolved-filter" title="Ukryj komentarze oznaczone jako rozwiązane">
+          Ukryj rozwiązane
+        </button>
+      </div>
+
+      <form class="comment-form" id="comment-form" hidden autocomplete="off">
+        <div class="fh" id="form-kind">Nowy komentarz</div>
+        <div class="quote" id="form-quote"></div>
+        <label>
+          <span>Twoje imię</span>
+          <input id="author" type="text" maxlength="60" placeholder="np. Anna" required>
+        </label>
+        <label>
+          <span>Komentarz</span>
+          <textarea id="text" maxlength="4000" rows="3" placeholder="Co warto poprawić?" required></textarea>
+        </label>
+        <p class="error" id="form-error" hidden></p>
+        <div class="actions">
+          <button class="btn ghost" type="button" id="cancel-comment">Anuluj</button>
+          <button class="btn primary" type="submit" id="submit-comment">Dodaj komentarz</button>
+        </div>
+      </form>
+
+      <div class="sidebar-scroll" id="sidebar-scroll">
+        <div class="hint" id="hint">
+          <b>Jak dodać komentarz?</b><br>
+          • zaznacz fragment tekstu na stronie (pojawi się przycisk „Dodaj komentarz”),<br>
+          • albo włącz <b>Tryb pinezki</b> i kliknij wybrane miejsce.
+        </div>
+        <div class="hint" id="hint-filtered" hidden></div>
+        <ul class="comment-list" id="comment-list"></ul>
+      </div>
+    </aside>
+  </div>
+
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/dialog.js"></script>
+<script src="/view.js"></script>
+</body>
+</html>

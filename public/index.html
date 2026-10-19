@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design Review – komentarze do designu stron</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M10 9h12v9H15l-4 4z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="/"><span class="brand-mark">🫥</span><span>Design Review</span></a>
+    <span class="tagline">Komentuj design bez logowania</span>
+    <div class="account" id="account" hidden>
+      <button class="btn ghost small" type="button" id="uid-btn" title="Skopiuj swój uid (przyda się do logowania)">🔑 Kopiuj uid</button>
+      <button class="btn ghost small" type="button" id="logout-btn" title="Wyloguj się">Wyloguj</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="card upload-card">
+    <h1>Wgraj stronę do recenzji</h1>
+    <p class="muted">
+      Spakuj pliki HTML, CSS, JS, obrazy i inne zasoby do jednego pliku <code>.zip</code>.
+      Plik <code>index.html</code> zostanie automatycznie otwarty jako strona główna.
+    </p>
+
+    <form id="upload-form">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Wybierz plik ZIP">
+        <input type="file" id="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
+        <div class="dz-icon">⬆</div>
+        <div class="dz-text"><strong>Przeciągnij tutaj plik ZIP</strong> lub <span class="link">wybierz z dysku</span></div>
+        <div class="dz-file" id="dz-file" hidden></div>
+      </div>
+
+      <div class="upload-row">
+        <input type="text" id="name" placeholder="Nazwa projektu (opcjonalnie)" maxlength="120" autocomplete="off">
+        <button class="btn primary" type="submit" id="upload-btn">Wgraj i udostępnij</button>
+      </div>
+    </form>
+
+    <div class="progress" id="progress" hidden><div class="bar" id="progress-bar"></div></div>
+    <p class="error" id="upload-error" hidden></p>
+  </section>
+
+  <section class="projects">
+    <div class="section-head">
+      <h2>Przesłane strony</h2>
+      <span class="count" id="count"></span>
+    </div>
+
+    <div id="list" class="project-list"></div>
+
+    <div id="empty" class="empty" hidden>
+      <p><strong>Nie ma jeszcze żadnych stron.</strong></p>
+      <p class="muted">Wgraj pierwsze archiwum ZIP, aby zacząć zbierać komentarze.</p>
+    </div>
+  </section>
+
+</main>
+
+<dialog id="pw-dialog" class="dialog">
+  <form id="pw-form" autocomplete="off">
+    <h3 id="pw-title">Hasło dostępu</h3>
+    <p class="muted small" id="pw-desc"></p>
+
+    <label class="field">
+      <span>Hasło</span>
+      <div class="uid-row">
+        <input id="pw-input" type="password" autocomplete="new-password" spellcheck="false" placeholder="min. 4 znaki">
+        <button class="btn ghost" type="button" id="pw-show" aria-pressed="false" title="Pokaż / ukryj hasło">Pokaż</button>
+      </div>
+    </label>
+
+    <p class="error" id="pw-error" hidden></p>
+
+    <div class="dialog-actions">
+      <button class="btn danger" type="button" id="pw-remove" hidden>Usuń hasło</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" type="button" id="pw-cancel">Anuluj</button>
+      <button class="btn primary" type="submit" id="pw-save">Zapisz</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/dialog.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

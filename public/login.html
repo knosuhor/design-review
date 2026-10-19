@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logowanie – Design Review</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M10 9h12v9H15l-4 4z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="login-page">
+
+<main class="login-wrap">
+  <div class="login-box">
+    <a class="login-back" id="back-link" href="/" hidden>
+      <span aria-hidden="true">←</span> Wróć do recenzji
+    </a>
+
+    <div class="card login-card">
+      <a class="brand" href="/"><span class="brand-mark">🫥</span><span>Design Review</span></a>
+      <h1>Zaloguj się</h1>
+      <p class="muted">
+        Wpisz swój <b>uid</b>, aby zarządzać przesłanymi stronami i ich linkami.
+      </p>
+
+      <form id="login-form" autocomplete="off">
+        <label class="field">
+          <span>UID</span>
+          <div class="uid-row">
+            <input id="uid" type="password" name="uid" placeholder="wklej swój uid" spellcheck="false"
+                   autocapitalize="off" autocomplete="off" autofocus>
+            <button class="btn ghost" type="button" id="show-uid" aria-pressed="false" title="Pokaż / ukryj uid">Pokaż</button>
+          </div>
+        </label>
+        <p class="error" id="login-error" hidden></p>
+        <button class="btn primary wide" type="submit" id="login-btn">Zaloguj</button>
+      </form>
+
+      <p class="muted small">
+        Uid znajdziesz w konsoli serwera (wypisywany przy starcie) albo w pliku
+        <code>data/config.json</code>.
+      </p>
+      <p class="muted small">
+        Chcesz tylko skomentować projekt? <b>Nie musisz się logować</b> – wystarczy
+        link do recenzji otrzymany od autora.
+      </p>
+    </div>
+  </div>
+</main>
+
+<script src="/login.js"></script>
+</body>
+</html>
