@@ -212,7 +212,7 @@ app.post('/api/projects', auth.requireAuthApi, upload.single('file'), async (req
 
 app.get('/api/projects/:id', requireProjectAccessApi, async (req, res) => {
   const comments = await store.readComments(req.project.id);
-  res.json({ project: projectDto(req.project), comments });
+  res.json({ project: projectDto(req.project), comments: commentsWithPage(comments, req.project) });
 });
 
 /**
@@ -366,8 +366,39 @@ function parseTextAnchor(a) {
   };
 }
 
+/**
+ * Strona, której dotyczy komentarz, to ścieżka pliku HTML względem katalogu
+ * projektu (np. "index.html" albo "podstrona/o-nas.html"). Starsze komentarze
+ * nie mają tego pola – traktujemy je jak komentarze do strony startowej.
+ */
+async function resolveCommentPage(project, raw) {
+  if (raw == null || raw === '') return project.entry;
+
+  const rel = String(raw).split('#')[0].split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '').trim();
+  if (!rel || !/\.html?$/i.test(rel)) return null;
+
+  const root = store.siteDir(project.id);
+  const target = path.join(root, ...rel.split('/'));
+  const norm = path.relative(root, target);
+  if (!norm || norm.startsWith('..') || path.isAbsolute(norm)) return null;
+
+  try {
+    const stat = await fsp.stat(target);
+    if (!stat.isFile()) return null;
+  } catch {
+    return null;
+  }
+  return norm.split(path.sep).join('/');
+}
+
+/** Uzupełnia brakujące pole `page` w komentarzach zapisanych przed tą zmianą. */
+function commentsWithPage(comments, project) {
+  return comments.map((c) => (c.page ? c : Object.assign({}, c, { page: project.entry })));
+}
+
 app.get('/api/projects/:id/comments', requireProjectAccessApi, async (req, res) => {
-  res.json({ comments: await store.readComments(req.project.id) });
+  const comments = await store.readComments(req.project.id);
+  res.json({ comments: commentsWithPage(comments, req.project) });
 });
 
 app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res) => {
@@ -385,11 +416,15 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
   const anchor = type === 'pin' ? parsePinAnchor(body.anchor) : parseTextAnchor(body.anchor);
   if (!anchor) return res.status(400).json({ error: 'Nieprawidłowe zakotwiczenie komentarza.' });
 
+  const page = await resolveCommentPage(project, body.page);
+  if (!page) return res.status(400).json({ error: 'Nieprawidłowa strona komentarza.' });
+
   const comment = {
     id: store.newId(),
     author,
     text,
     type,
+    page,
     anchor,
     resolved: false,
     createdAt: Date.now(),
@@ -410,7 +445,7 @@ app.patch('/api/projects/:id/comments/:commentId', requireProjectAccessApi, asyn
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Brak zmian.' });
   const updated = await store.updateComment(project.id, req.params.commentId, patch);
   if (!updated) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
-  res.json({ comment: updated });
+  res.json({ comment: commentsWithPage([updated], project)[0] });
 });
 
 app.delete('/api/projects/:id/comments/:commentId', requireProjectAccessApi, async (req, res) => {
@@ -448,9 +483,15 @@ async function resolveSitePath(root, rel) {
   return stat.isFile() ? target : null;
 }
 
-const ANNOTATOR_TAG = '<script src="/annotator.js"></script>';
 const CSP_META_RE = /<meta[^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi;
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+function escapeAttr(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
 
 function isUtf8(buffer) {
   try {
@@ -462,14 +503,17 @@ function isUtf8(buffer) {
 }
 
 /**
- * Do każdego serwowanego dokumentu HTML wstrzykujemy skrypt warstwy adnotacji.
+ * Do każdego serwowanego dokumentu HTML wstrzykujemy skrypt warstwy adnotacji,
+ * przekazując mu ścieżkę pliku, w którym się znajduje. Dzięki temu komentarz
+ * wie, do której podstrony należy (także gdy plik jest indeksem katalogu).
  * Przy okazji usuwamy meta CSP, które mogłoby zablokować ten skrypt.
  */
-function injectAnnotator(html) {
+function injectAnnotator(html, page) {
   const clean = html.replace(CSP_META_RE, '');
-  if (/<\/body\s*>/i.test(clean)) return clean.replace(/<\/body\s*>/i, ANNOTATOR_TAG + '\n</body>');
-  if (/<\/html\s*>/i.test(clean)) return clean.replace(/<\/html\s*>/i, ANNOTATOR_TAG + '\n</html>');
-  return clean + '\n' + ANNOTATOR_TAG;
+  const tag = '<script src="/annotator.js" data-page="' + escapeAttr(page) + '"></script>';
+  if (/<\/body\s*>/i.test(clean)) return clean.replace(/<\/body\s*>/i, tag + '\n</body>');
+  if (/<\/html\s*>/i.test(clean)) return clean.replace(/<\/html\s*>/i, tag + '\n</html>');
+  return clean + '\n' + tag;
 }
 
 app.get('/p/:id', (req, res, next) => {
@@ -516,7 +560,8 @@ app.get('/p/:id/*', async (req, res) => {
     }
     const utf8 = isUtf8(buffer);
     const source = buffer.toString(utf8 ? 'utf8' : 'latin1');
-    const out = injectAnnotator(source);
+    const page = path.relative(root, file).split(path.sep).join('/');
+    const out = injectAnnotator(source, page);
     res.setHeader('Content-Type', utf8 ? 'text/html; charset=utf-8' : 'text/html');
     return res.end(Buffer.from(out, utf8 ? 'utf8' : 'latin1'));
   }

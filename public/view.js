@@ -41,10 +41,12 @@ const toastEl = $('#toast');
 
 let project = null;
 let comments = [];
-let pending = null;       // aktualnie tworzony komentarz: {kind, anchor, preview}
+let pending = null;       // aktualnie tworzony komentarz: {kind, page, anchor, preview}
 let mode = 'select';
 let activeId = null;
 let childReady = false;
+let currentPage = '';     // plik aktualnie otwarty w podglądzie
+let pendingFocusId = null; // komentarz, do którego wracamy po wczytaniu innej strony
 let missingIds = new Set();
 let hideResolved = localStorage.getItem(FILTER_KEY) === '1';
 let toastTimer = null;
@@ -88,9 +90,45 @@ function hiddenCommentIds() {
   return hideResolved ? comments.filter((c) => c.resolved).map((c) => c.id) : [];
 }
 
+/** Komentarze dotyczące strony aktualnie otwartej w podglądzie. */
+function commentsForPage() {
+  return currentPage ? comments.filter((c) => c.page === currentPage) : [];
+}
+
+/** Numer komentarza w obrębie jego własnej strony (zgodny z numerem pinezki). */
+function commentNumber(comment) {
+  let n = 0;
+  for (const c of comments) {
+    if (c.page === comment.page) {
+      n++;
+      if (c.id === comment.id) return n;
+    }
+  }
+  return 0;
+}
+
+function pageUrl(page) {
+  return '/p/' + encodeURIComponent(projectId) + '/'
+    + page.split('/').map(encodeURIComponent).join('/');
+}
+
 function pushCommentsToChild() {
-  postToChild({ type: 'set-comments', comments });
+  // Warstwa adnotacji dostaje wyłącznie komentarze swojego pliku – inaczej
+  // XPath z jednej podstrony trafiałby w przypadkowe elementy innej.
+  postToChild({ type: 'set-comments', comments: commentsForPage() });
   postToChild({ type: 'set-hidden', ids: hiddenCommentIds() });
+}
+
+/** Pasek pod nazwą projektu: otwarta strona, liczba komentarzy, rozmiar. */
+function renderMeta() {
+  if (!project) return;
+  const parts = [];
+  if (currentPage) parts.push(currentPage);
+  parts.push(`${comments.length} komentarz(y)`);
+  parts.push(`${project.files} plik(ów)`);
+  parts.push(formatBytes(project.size));
+  metaEl.textContent = parts.join(' · ');
+  metaEl.title = currentPage ? 'Otwarta strona: ' + currentPage : '';
 }
 
 function formatBytes(bytes) {
@@ -138,12 +176,14 @@ function renderList() {
     + (resolvedCount ? ` (${resolvedCount})` : '');
   resolvedFilter.setAttribute('aria-pressed', hideResolved ? 'true' : 'false');
 
-  comments.forEach((comment, index) => {
+  comments.forEach((comment) => {
     if (hideResolved && comment.resolved) return;
+    const onOtherPage = comment.page !== currentPage;
     const li = document.createElement('li');
     li.className = 'comment'
       + (comment.id === activeId ? ' active' : '')
-      + (comment.resolved ? ' resolved' : '');
+      + (comment.resolved ? ' resolved' : '')
+      + (onOtherPage ? ' other-page' : '');
     li.dataset.id = comment.id;
 
     const head = document.createElement('div');
@@ -152,7 +192,7 @@ function renderList() {
     const num = document.createElement('span');
     num.className = 'num';
     const numText = document.createElement('span');
-    numText.textContent = String(index + 1);
+    numText.textContent = String(commentNumber(comment));
     num.appendChild(numText);
 
     const author = document.createElement('span');
@@ -165,6 +205,14 @@ function renderList() {
     time.title = new Date(comment.createdAt).toLocaleString('pl-PL');
 
     head.append(num, author, time);
+
+    if (onOtherPage) {
+      const chip = document.createElement('span');
+      chip.className = 'page-chip';
+      chip.textContent = comment.page;
+      chip.title = 'Komentarz do strony: ' + comment.page + ' – kliknij, aby ją otworzyć';
+      head.insertBefore(chip, time);
+    }
 
     const body = document.createElement('div');
     body.className = 'comment-body';
@@ -226,6 +274,7 @@ function renderList() {
         await api(`/api/projects/${projectId}/comments/${comment.id}`, { method: 'DELETE' });
         comments = comments.filter((c) => c.id !== comment.id);
         if (activeId === comment.id) activeId = null;
+        renderMeta();
         pushCommentsToChild();
         renderList();
       } catch (err) {
@@ -243,11 +292,31 @@ function renderList() {
 }
 
 function selectComment(id, scrollPage) {
+  const comment = comments.find((c) => c.id === id);
+  if (!comment) return;
+
   activeId = id;
   renderList();
+
+  // Komentarz z innej podstrony: najpierw wczytaj tę stronę, potem go pokaż.
+  if (comment.page && comment.page !== currentPage) {
+    openPage(comment.page, id);
+    return;
+  }
+
   postToChild(scrollPage ? { type: 'focus', id } : { type: 'select', id });
   const el = listEl.querySelector(`[data-id="${id}"]`);
   if (el && scrollPage) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+/** Wczytuje w podglądzie wskazany plik i (opcjonalnie) podświetla komentarz. */
+function openPage(page, focusId) {
+  pendingFocusId = focusId || null;
+  missingIds = new Set();
+  childReady = false;
+  loader.hidden = false;
+  pinToggle.disabled = true;
+  iframe.src = pageUrl(page);
 }
 
 /* -------------------------------- formularz -------------------------------- */
@@ -297,12 +366,19 @@ form.addEventListener('submit', async (e) => {
     const data = await api(`/api/projects/${projectId}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ author, text, type: pending.kind, anchor: pending.anchor }),
+      body: JSON.stringify({
+        author,
+        text,
+        type: pending.kind,
+        page: pending.page || currentPage,
+        anchor: pending.anchor,
+      }),
     });
 
     localStorage.setItem(NAME_KEY, author);
     comments.push(data.comment);
     activeId = data.comment.id;
+    renderMeta();
     pushCommentsToChild();
     renderList();
     closeForm(true);
@@ -369,15 +445,38 @@ window.addEventListener('message', (e) => {
   if (!d || d.ns !== NS) return;
 
   switch (d.type) {
-    case 'ready':
+    case 'ready': {
       childReady = true;
       loader.hidden = true;
       pinToggle.disabled = false;
+
+      const page = typeof d.page === 'string' ? d.page : '';
+      if (page !== currentPage) {
+        currentPage = page;
+        missingIds = new Set();
+        renderMeta();
+        renderList();
+      }
+
       pushCommentsToChild();
       postToChild({ type: 'set-mode', mode });
+
+      // Jeśli komentarz z innej strony był powodem wczytania tego pliku,
+      // teraz – gdy warstwa adnotacji już działa – pokaż go i przewiń.
+      if (pendingFocusId) {
+        const id = pendingFocusId;
+        pendingFocusId = null;
+        const c = comments.find((x) => x.id === id);
+        if (c && c.page === currentPage) {
+          activeId = id;
+          renderList();
+          postToChild({ type: 'focus', id });
+        }
+      }
       break;
+    }
     case 'new-anchor':
-      openForm({ kind: d.kind, anchor: d.anchor }, d.preview || '');
+      openForm({ kind: d.kind, page: d.page || currentPage, anchor: d.anchor }, d.preview || '');
       break;
     case 'select-comment':
       selectComment(d.id, false);
@@ -393,15 +492,39 @@ window.addEventListener('message', (e) => {
 
 iframe.addEventListener('load', () => {
   // Po nawigacji wewnątrz podglądu warstwa adnotacji wstrzykuje się od nowa.
-  childReady = false;
-  const src = iframe.contentWindow && iframe.contentWindow.location.href;
-  if (src && src !== 'about:blank') loader.hidden = false;
+  if (childReady) childReady = false;
+
+  let insideSite = false;
+  try {
+    insideSite = iframe.contentWindow.location.pathname.startsWith('/p/' + projectId + '/');
+  } catch {
+    insideSite = false; // podgląd opuścił naszą domenę
+  }
+
+  if (!insideSite) {
+    // Link zewnętrzny / strona bez warstwy adnotacji – nie pokazujemy pinezek
+    // z poprzedniej podstrony.
+    if (currentPage) {
+      currentPage = '';
+      missingIds = new Set();
+      renderMeta();
+      renderList();
+      pushCommentsToChild();
+    }
+  } else {
+    loader.hidden = false;
+  }
+
   setTimeout(() => {
     if (!childReady) {
       loader.hidden = true;
       pinToggle.disabled = false;
+      if (pendingFocusId) {
+        pendingFocusId = null;
+        toast('Nie udało się otworzyć strony z tym komentarzem', true);
+      }
     }
-  }, 2500);
+  }, 3500);
 });
 
 /* --------------------------------- start ---------------------------------- */
@@ -436,7 +559,8 @@ async function init() {
 
     nameEl.textContent = project.name;
     nameEl.title = project.name;
-    metaEl.textContent = `${comments.length} komentarz(y) · ${project.files} plik(ów) · ${formatBytes(project.size)}`;
+    currentPage = project.entry;
+    renderMeta();
     document.title = project.name + ' – Design Review';
     openNew.href = project.entryUrl;
     downloadZip.href = `/api/projects/${project.id}/archive`;

@@ -629,6 +629,21 @@ body.viewer { overflow: hidden; }
 .comment.resolved .num span { display: none; }
 .author { font-weight: 600; font-size: .88rem; }
 .time { color: var(--muted); font-size: .76rem; margin-left: auto; white-space: nowrap; }
+/* Nazwa podstrony przy komentarzu dotyczącym innego pliku. */
+.page-chip {
+  flex: 0 1 auto;
+  max-width: 46%;
+  font-size: .68rem;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 .4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .comment-body {
   font-size: .89rem;

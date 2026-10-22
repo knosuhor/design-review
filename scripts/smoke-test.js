@@ -116,6 +116,7 @@ async function main() {
   const html = await pageRes.text();
   check('strona działa (200)', pageRes.status === 200);
   check('wstawiono <script src="/annotator.js">', html.includes('/annotator.js'));
+  check('warstwa adnotacji zna nazwę pliku', html.includes('data-page="index.html"'), 'brak data-page');
   check('usunięto meta CSP', !/content-security-policy/i.test(html));
 
   console.log('\n3. Zasoby (CSS)');
@@ -161,6 +162,8 @@ async function main() {
   check('pinezka zapisuje element docelowy',
     !!pinComment.anchor.target && pinComment.anchor.target.xpath === '/body[1]/main[1]/button[1]',
     JSON.stringify(pinComment.anchor));
+  check('komentarz bez pola page trafia na stronę startową',
+    pinComment.page === 'index.html', String(pinComment.page));
   check('ułamki położenia są znormalizowane',
     pinComment.anchor.target.fx === 0.5 && pinComment.anchor.target.fy === 0.25);
 
@@ -214,6 +217,54 @@ async function main() {
     body: JSON.stringify({ resolved: true }),
   });
   check('oznaczenie jako rozwiązany', resolveRes.status === 200 && (await resolveRes.json()).comment.resolved === true);
+
+  console.log('\n4b. Komentarze przypisane do podstron');
+  const aboutHtml = await (await fetch(`${BASE}/p/${project.id}/about.html`)).text();
+  check('warstwa adnotacji na podstronie zna jej nazwę',
+    aboutHtml.includes('data-page="about.html"'), 'brak data-page="about.html"');
+
+  const aboutRes = await fetch(`${BASE}/api/projects/${project.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      author: 'Celina',
+      text: 'Ta podstrona potrzebuje innego nagłówka.',
+      type: 'pin',
+      page: 'about.html',
+      anchor: { x: 44, y: 88, target: { xpath: '/body[1]/main[1]/h1[1]', fx: 0.5, fy: 0.5 } },
+    }),
+  });
+  const aboutComment = (await aboutRes.json()).comment;
+  check('komentarz zapisany z konkretnym plikiem',
+    aboutRes.status === 201 && aboutComment.page === 'about.html', String(aboutComment.page));
+
+  const badPage = await fetch(`${BASE}/api/projects/${project.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      author: 'Celina', text: 'Poza projektem.', type: 'pin', page: '../server.js',
+      anchor: { x: 1, y: 2 },
+    }),
+  });
+  check('odrzuca stronę spoza projektu (400)', badPage.status === 400, String(badPage.status));
+
+  const missingPage = await fetch(`${BASE}/api/projects/${project.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      author: 'Celina', text: 'Nie ma takiej strony.', type: 'pin', page: 'nie-ma-takiej.html',
+      anchor: { x: 1, y: 2 },
+    }),
+  });
+  check('odrzuca nieistniejący plik (400)', missingPage.status === 400, String(missingPage.status));
+
+  const pages = (await (await fetch(`${BASE}/api/projects/${project.id}/comments`)).json()).comments;
+  check('lista zwraca stronę przy każdym komentarzu',
+    pages.every((c) => typeof c.page === 'string' && c.page), pages.map((c) => c.page).join(', '));
+  check('komentarze ze strony startowej i podstrony są rozróżnialne',
+    pages.filter((c) => c.page === 'index.html').length === 3
+      && pages.filter((c) => c.page === 'about.html').length === 1,
+    pages.map((c) => c.page).join(', '));
 
   console.log('\n5. Zabezpieczenia');
   const traversal = await fetch(`${BASE}/p/${project.id}/..%2f..%2fserver.js`);

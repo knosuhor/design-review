@@ -20,6 +20,21 @@
   var doc = document;
   var OWN_TAG = /^DRA-/;
 
+  /**
+   * Ścieżka pliku, w którym działa warstwa (np. "about.html"). Serwer wstawia
+   * ją w atrybucie data-page, więc indeksy katalogów też mają poprawną nazwę.
+   */
+  function pageFromDocument() {
+    var el = doc.currentScript;
+    var page = el && el.getAttribute ? el.getAttribute('data-page') : '';
+    if (page) return page;
+    var m = /^\/p\/[^/]+\/(.*)$/.exec(win.location.pathname);
+    if (!m) return '';
+    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+  }
+
+  var PAGE = pageFromDocument();
+
   var state = {
     comments: [],
     mode: 'select',
@@ -635,7 +650,7 @@
     clearSelectionTip();
     state.pending = { kind: 'text', anchor: anchor, range: range };
     render();
-    post('new-anchor', { kind: 'text', anchor: anchor, preview: text });
+    post('new-anchor', { page: PAGE, kind: 'text', anchor: anchor, preview: text });
   }
 
   /* --------------------------------------------------------------------- */
@@ -675,7 +690,7 @@
     } catch (err) { /* nic */ }
     state.pending = { kind: 'pin', anchor: anchor, range: null };
     render();
-    post('new-anchor', { kind: 'pin', anchor: anchor, preview: '' });
+    post('new-anchor', { page: PAGE, kind: 'pin', anchor: anchor, preview: '' });
   }, true);
 
   function markerIdFrom(node) {
@@ -841,5 +856,5 @@
     }
   }, false);
 
-  post('ready', { height: doc.documentElement.scrollHeight });
+  post('ready', { page: PAGE, height: doc.documentElement.scrollHeight });
 })();

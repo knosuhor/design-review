@@ -101,6 +101,10 @@ set PORT=8080 && npm start
 - **zaznaczenie tekstu** → nad zaznaczeniem pojawia się przycisk „Dodaj komentarz”,
 - **Tryb pinezki** → kliknięcie w dowolnym miejscu stawia pinezkę; obok tego
   przycisku widnieje podpowiedź **„Zaznacz tekst, aby komentować”**,
+- komentarze są przypisane do **konkretnego pliku HTML**. Panel pokazuje wpisy
+  z całego projektu — przy komentarzu z innej podstrony widnieje jej nazwa
+  (np. `about.html`); kliknięcie takiego wpisu **wczytuje tę podstronę**
+  i od razu podświetla właściwy komentarz,
 - kliknięcie wpisu na liście wyróżnia odpowiadający mu komentarz w podglądzie:
   pinezka (razem z numerem) jest powiększona do 120% i przybiera wyraźny
   **różowy kolor `#ee3a70`** (ten sam, co emoji 📌 w pasku), a wokół niej
@@ -128,6 +132,13 @@ set PORT=8080 && npm start
   (`/annotator.js`), a nagłówki `meta` z CSP są usuwane, aby nie blokowały tego skryptu.
 
 ## Kotwiczenie komentarzy
+
+Każdy komentarz zapisuje plik, w którym powstał (`page`, np. `index.html` albo
+`podstrona/o-nas.html`). Warstwa adnotacji otrzymuje **wyłącznie komentarze
+aktualnie otwartej podstrony**, więc XPath z jednego pliku nie trafia
+w przypadkowy element innego — nawet gdy obie strony mają identyczną strukturę.
+Zmiana podstrony w podglądzie (kliknięcie linku albo komentarza z listy)
+automatycznie przełącza też listę i numerację pinezek.
 
 - **Pinezka** – zakotwiczona do **klikniętego elementu**: zapisywana jest ścieżka
   XPath tego elementu oraz położenie kliknięcia jako ułamek jego szerokości
@@ -200,6 +211,7 @@ Przykład dodania komentarza typu pinezka:
   "author": "Anna",
   "text": "Ten przycisk powinien być większy.",
   "type": "pin",
+  "page": "index.html",
   "anchor": {
     "x": 120, "y": 340,
     "docWidth": 1200, "docHeight": 2400,
@@ -215,6 +227,10 @@ Przykład dodania komentarza typu pinezka:
 Pole `target` jest opcjonalne — `fx`/`fy` to położenie pinezki jako ułamek
 szerokości i wysokości elementu wskazanego przez `xpath`.
 
+Pole `page` wskazuje plik HTML względem katalogu projektu i musi istnieć
+w przesłanym archiwum. Jest opcjonalne — bez niego komentarz trafia na stronę
+startową (tak zachowują się komentarze zapisane przed wprowadzeniem podstron).
+
 Przykład komentarza do tekstu:
 
 ```json
@@ -222,6 +238,7 @@ Przykład komentarza do tekstu:
   "author": "Bartek",
   "text": "Skróć to zdanie.",
   "type": "text",
+  "page": "about.html",
   "anchor": {
     "startXPath": "/body[1]/main[1]/p[1]/text()[1]",
     "startOffset": 0,
@@ -242,7 +259,8 @@ npm test
 
 Skrypt `scripts/smoke-test.js` sprawdza logowanie i blokadę dostępu, upload,
 wstrzykiwanie warstwy adnotacji, poprawność typów MIME, dodawanie i usuwanie
-komentarzy, walidację, archiwum ZIP, hasło dostępu do strony (blokada widoku,
+komentarzy, przypisanie komentarzy do podstron (walidacja ścieżki i pliku),
+archiwum ZIP, hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
