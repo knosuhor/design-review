@@ -85,11 +85,25 @@ set PORT=8080 && npm start
 - przeciągnij i upuść plik `.zip` albo wybierz go z dysku (limit 50 MB),
 - **Kopiuj link** – skopiowanie adresu do udostępnienia recenzentowi,
 - akcje przy projekcie to ikony (oszczędzają miejsce): **👁** widok recenzji,
-  **↗** sama strona w nowej karcie, **⬇** pobranie projektu jako ZIP,
-  **🔒/🔓** hasło dostępu, **🗑** usunięcie strony wraz z komentarzami.
+  **↗** sama strona w nowej karcie, **🔄** podmiana plików na nowszą wersję ZIP,
+  **⬇** pobranie projektu jako ZIP, **🔒/🔓** hasło dostępu,
+  **🗑** usunięcie strony wraz z komentarzami.
   Pełny opis każdej ikony pojawia się po najechaniu myszą. Usunięcie strony
   potwierdzasz oknem dialogowym w stylu aplikacji (nie natywnym oknem
   przeglądarki).
+
+### Podmiana plików (nowa wersja)
+
+Ikona **🔄** przy projekcie pozwala wgrać nowe archiwum ZIP do **istniejącej**
+strony:
+
+- link do recenzji (`/v/<id>`) się nie zmienia,
+- hasło dostępu i wszystkie komentarze zostają,
+- pliki starej wersji są usuwane, a na ich miejsce wchodzi nowe archiwum,
+- jeśli nowy ZIP jest nieprawidłowy, podmiana jest przerywana i **stara wersja
+  pozostaje nietknięta**,
+- komentarze, których miejsc nie da się już odnaleźć po zmianie struktury,
+  nadal są widoczne na liście — z ostrzeżeniem.
 
 ### Widok recenzji `/v/<id>`
 
@@ -186,6 +200,7 @@ sample/landing.zip     przykładowa strona do testów
 | `GET` | `/api/session` | publiczny | `{ authed, uid }` – stan zalogowania dla interfejsu |
 | `GET` | `/api/projects` | **tylko zalogowany** | lista stron |
 | `POST` | `/api/projects` | **tylko zalogowany** | upload ZIP (`multipart/form-data`: `file`, opcjonalnie `name`) |
+| `POST` | `/api/projects/:id/replace` | **tylko zalogowany** | podmiana plików istniejącej strony (`multipart/form-data`: `file`); link, hasło i komentarze bez zmian |
 | `DELETE` | `/api/projects/:id` | **tylko zalogowany** | usunięcie strony wraz z komentarzami |
 | `POST` | `/api/projects/:id/password` | **tylko zalogowany** | ustawienie (`{ "password": "…" }`) lub usunięcie (`""`) hasła strony |
 | `GET` | `/api/projects/:id/access` | publiczny | `{ name, locked, unlocked }` – stan dostępu do strony (dla ekranu hasła) |
@@ -260,7 +275,9 @@ npm test
 Skrypt `scripts/smoke-test.js` sprawdza logowanie i blokadę dostępu, upload,
 wstrzykiwanie warstwy adnotacji, poprawność typów MIME, dodawanie i usuwanie
 komentarzy, przypisanie komentarzy do podstron (walidacja ścieżki i pliku),
-archiwum ZIP, hasło dostępu do strony (blokada widoku,
+archiwum ZIP, podmianę plików bez zmiany linku (nowa treść, usunięcie starych
+plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
+hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).

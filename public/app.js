@@ -20,6 +20,7 @@ const toastEl = $('#toast');
 const accountEl = $('#account');
 const uidBtn = $('#uid-btn');
 const logoutBtn = $('#logout-btn');
+const replaceInput = $('#replace-file');
 
 const pwDialog = $('#pw-dialog');
 const pwForm = $('#pw-form');
@@ -35,6 +36,8 @@ const pwDesc = $('#pw-desc');
 let pwProject = null;
 
 let selectedFile = null;
+let replaceTarget = null;
+let replaceBtnEl = null;
 let toastTimer = null;
 let currentUid = '';
 
@@ -145,8 +148,11 @@ function renderProjects(projects) {
 
     const meta = document.createElement('div');
     meta.className = 'pi-meta';
+    const dateText = project.updatedAt
+      ? `Podmieniono ${formatDate(project.updatedAt)}`
+      : formatDate(project.createdAt);
     meta.innerHTML =
-      `<span>${formatDate(project.createdAt)}</span>` +
+      `<span${project.updatedAt ? ` title="Wgrano: ${formatDate(project.createdAt)}"` : ''}>${dateText}</span>` +
       `<span class="dot">·</span><span>${formatBytes(project.size)}</span>` +
       `<span class="dot">·</span><span>${project.files} plik(ów)</span>` +
       `<span class="dot">·</span><span><code>${project.entry}</code></span>`;
@@ -194,6 +200,19 @@ function renderProjects(projects) {
     zipBtn.title = 'Pobierz projekt jako ZIP (bez komentarzy)';
     zipBtn.setAttribute('aria-label', 'Pobierz projekt jako ZIP (bez komentarzy)');
 
+    const replaceBtn = document.createElement('button');
+    replaceBtn.className = 'btn icon';
+    replaceBtn.type = 'button';
+    replaceBtn.textContent = '🔄';
+    replaceBtn.title = 'Podmień pliki – wgraj nowszą wersję ZIP (link i komentarze bez zmian)';
+    replaceBtn.setAttribute('aria-label', replaceBtn.title);
+    replaceBtn.addEventListener('click', () => {
+      replaceTarget = project;
+      replaceBtnEl = replaceBtn;
+      replaceInput.value = '';
+      replaceInput.click();
+    });
+
     const pwBtn = document.createElement('button');
     pwBtn.className = 'btn icon' + (project.locked ? ' toggled' : '');
     pwBtn.type = 'button';
@@ -229,7 +248,7 @@ function renderProjects(projects) {
       }
     });
 
-    actions.append(openBtn, openTab, zipBtn, pwBtn, delBtn);
+    actions.append(openBtn, openTab, replaceBtn, zipBtn, pwBtn, delBtn);
     item.append(thumb, main, actions);
     listEl.appendChild(item);
   }
@@ -461,6 +480,79 @@ form.addEventListener('submit', (e) => {
     progressEl.hidden = true;
     errorEl.hidden = false;
     errorEl.textContent = 'Błąd połączenia podczas wysyłania pliku.';
+  });
+
+  xhr.send(formData);
+});
+
+/* ----------------------------- podmiana plików ---------------------------- */
+
+replaceInput.addEventListener('change', async () => {
+  const file = replaceInput.files && replaceInput.files[0];
+  const project = replaceTarget;
+  const btn = replaceBtnEl;
+  replaceTarget = null;
+  replaceBtnEl = null;
+  replaceInput.value = '';
+  if (!file || !project) return;
+
+  if (!/\.zip$/i.test(file.name)) {
+    toast('Wybierz plik z rozszerzeniem .zip', true);
+    return;
+  }
+
+  const ok = await drConfirm({
+    title: 'Podmienić pliki strony?',
+    message: `Nowa wersja zastąpi obecne pliki projektu „${project.name}”. `
+      + 'Link do recenzji, hasło i komentarze pozostaną bez zmian.',
+    confirmText: 'Podmień pliki',
+  });
+  if (!ok) return;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳';
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `/api/projects/${project.id}/replace`);
+
+  let nextToastAt = 0;
+  xhr.upload.addEventListener('progress', (ev) => {
+    if (!ev.lengthComputable) return;
+    const pct = Math.round((ev.loaded / ev.total) * 100);
+    if (pct >= nextToastAt) {
+      nextToastAt = pct + 10;
+      toast(`Wgrywanie nowej wersji… ${pct}%`);
+    }
+  });
+
+  xhr.addEventListener('load', async () => {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🔄';
+    }
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+    if (xhr.status === 401) { location.href = '/login'; return; }
+
+    if (xhr.status >= 200 && xhr.status < 300 && data.project) {
+      await loadProjects();
+      toast('Pliki podmienione – link i komentarze pozostały bez zmian');
+    } else {
+      toast(data.error || `Nie udało się podmienić plików (błąd ${xhr.status}).`, true);
+    }
+  });
+
+  xhr.addEventListener('error', () => {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🔄';
+    }
+    toast('Błąd połączenia podczas wysyłania pliku.', true);
   });
 
   xhr.send(formData);

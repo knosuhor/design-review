@@ -42,6 +42,25 @@ function entryUrl(id, entry) {
   return '/p/' + id + '/' + String(entry).split('/').map(encodeURIComponent).join('/');
 }
 
+/**
+ * Windows potrafi chwilowo zablokować katalog (np. gdy trwa odczyt pliku),
+ * dlatego przenoszenie ponawiamy kilka razy.
+ */
+async function renameWithRetry(from, to) {
+  let lastErr;
+  for (let i = 0; i < 8; i++) {
+    try {
+      await fsp.rename(from, to);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(err.code)) throw err;
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+  throw lastErr;
+}
+
 function projectDto(project) {
   return {
     id: project.id,
@@ -50,6 +69,7 @@ function projectDto(project) {
     files: project.files,
     size: project.size,
     createdAt: project.createdAt,
+    updatedAt: project.updatedAt || null,
     entryUrl: entryUrl(project.id, project.entry),
     viewPath: '/v/' + project.id,
     locked: Boolean(project.password && project.password.hash),
@@ -305,6 +325,59 @@ app.get('/api/projects/:id/archive', requireProjectAccessApi, async (req, res) =
   } catch (err) {
     console.error('[zip]', err);
     res.status(500).json({ error: 'Nie udało się przygotować archiwum.' });
+  }
+});
+
+app.post('/api/projects/:id/replace', auth.requireAuthApi, upload.single('file'), async (req, res) => {
+  const tmpFile = req.file && req.file.path;
+  const project = store.getProject(req.params.id);
+  const dir = project ? store.siteDir(project.id) : null;
+  const staging = dir ? dir + '.new-' + store.newId() : null;
+  const backup = dir ? dir + '.old-' + store.newId() : null;
+
+  try {
+    if (!project) return res.status(404).json({ error: 'Projekt nie istnieje.' });
+    if (!req.file) return res.status(400).json({ error: 'Nie przesłano pliku .zip' });
+
+    let files;
+    try {
+      files = await extractZip(tmpFile, staging);
+    } catch (err) {
+      return res.status(400).json({ error: err.message || 'Nie udało się rozpakować archiwum.' });
+    }
+
+    const entry = detectEntry(files);
+    if (!entry) {
+      return res.status(400).json({ error: 'W archiwum nie znaleziono żadnego pliku HTML.' });
+    }
+
+    // Podmiana katalogu: najpierw odsuń starą wersję, potem wstaw nową.
+    // Przy błędzie drugiego kroku przywracamy poprzednie pliki.
+    await renameWithRetry(dir, backup);
+    try {
+      await renameWithRetry(staging, dir);
+    } catch (err) {
+      await renameWithRetry(backup, dir).catch(() => {});
+      throw err;
+    }
+    await fsp.rm(backup, { recursive: true, force: true }).catch((err) => {
+      console.error('[replace] nie udało się usunąć starej wersji:', err);
+    });
+
+    const updated = await store.updateProject(project.id, {
+      entry,
+      files: files.length,
+      size: req.file.size,
+      updatedAt: Date.now(),
+    });
+
+    res.json({ project: projectDto(updated || project) });
+  } catch (err) {
+    console.error('[replace]', err);
+    res.status(500).json({ error: 'Nie udało się podmienić plików projektu.' });
+  } finally {
+    if (staging) fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
+    if (tmpFile) fsp.rm(tmpFile, { force: true }).catch(() => {});
   }
 });
 

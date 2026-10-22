@@ -376,6 +376,71 @@ async function main() {
   const publicAgain = await realFetch(`${BASE}/v/${project.id}`, { redirect: 'manual' });
   check('po usunięciu hasła widok znów publiczny', publicAgain.status === 200, String(publicAgain.status));
 
+  console.log('\n5c. Podmiana plików bez zmiany linku');
+  const anonReplace = await realFetch(`${BASE}/api/projects/${project.id}/replace`, {
+    method: 'POST', body: new FormData(),
+  });
+  check('podmiana bez logowania zablokowana (401)', anonReplace.status === 401, String(anonReplace.status));
+
+  // Hasło ustawione przed podmianą – powinno przetrwać.
+  await fetch(`${BASE}/api/projects/${project.id}/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'trwale-haslo' }),
+  });
+
+  const newZip = new AdmZip();
+  newZip.addFile('index.html', Buffer.from(
+    '<!doctype html><html><head><meta charset="utf-8"><title>Nowa</title></head>'
+    + '<body><h1>NOWA WERSJA</h1></body></html>'
+  ));
+  newZip.addFile('style.css', Buffer.from('h1{color:red}'));
+  const newZipBuf = newZip.toBuffer();
+
+  const zipForm = (buffer, name) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([buffer], { type: 'application/zip' }), name);
+    return fd;
+  };
+
+  const replaceRes = await fetch(`${BASE}/api/projects/${project.id}/replace`, {
+    method: 'POST', body: zipForm(newZipBuf, 'nowa-wersja.zip'),
+  });
+  const replaced = await replaceRes.json();
+  check('podmiana plików (200)', replaceRes.status === 200, JSON.stringify(replaced).slice(0, 200));
+  check('link bez zmian (to samo id)', replaced.project && replaced.project.id === project.id);
+  check('wykryto nowy plik startowy', replaced.project.entry === 'index.html', String(replaced.project.entry));
+  check('zaktualizowano liczbę plików', replaced.project.files === 2, String(replaced.project.files));
+  check('zapisano czas podmiany', typeof replaced.project.updatedAt === 'number');
+
+  const newHtml = await (await fetch(BASE + project.entryUrl)).text();
+  check('serwowana jest nowa treść', newHtml.includes('NOWA WERSJA'));
+  check('stara treść zniknęła', !newHtml.includes('Acme'));
+  check('stare podstrony usunięte', (await fetch(`${BASE}/p/${project.id}/about.html`)).status === 404);
+  check('stare zasoby usunięte', (await fetch(`${BASE}/p/${project.id}/img/placeholder.png`)).status === 404);
+
+  const keptComments = (await (await fetch(`${BASE}/api/projects/${project.id}/comments`)).json()).comments;
+  check('komentarze zachowane po podmianie', keptComments.length === 4, String(keptComments.length));
+
+  const lockedAfter = await realFetch(`${BASE}/v/${project.id}`, { redirect: 'manual' });
+  check('hasło przetrwało podmianę',
+    lockedAfter.status === 302 && (lockedAfter.headers.get('location') || '').startsWith(`/unlock/${project.id}`),
+    `${lockedAfter.status} → ${lockedAfter.headers.get('location')}`);
+
+  const badZipRes = await fetch(`${BASE}/api/projects/${project.id}/replace`, {
+    method: 'POST', body: zipForm(Buffer.from('to nie jest zip'), 'zly.zip'),
+  });
+  check('nieprawidłowy ZIP odrzucony (400)', badZipRes.status === 400, String(badZipRes.status));
+  const afterBad = await (await fetch(BASE + project.entryUrl)).text();
+  check('po błędzie pliki pozostały nietknięte', afterBad.includes('NOWA WERSJA'));
+
+  const clearAfter = await fetch(`${BASE}/api/projects/${project.id}/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: '' }),
+  });
+  check('hasło usunięte po teście podmiany', clearAfter.status === 200);
+
   console.log('\n6. Sprzątanie');
   const delRes = await fetch(`${BASE}/api/projects/${project.id}`, { method: 'DELETE' });
   check('usunięcie projektu', delRes.status === 200);
