@@ -134,6 +134,9 @@
     'box-shadow:0 2px 6px rgba(0,0,0,.3)!important;line-height:1!important;user-select:none!important;',
     '-webkit-user-select:none!important;}',
     'dra-hibadge.dra-resolved{background:#98a0b0!important;}',
+    // Element jest teraz ukryty (zwinięty akordeon, zakładka, slajd) – znacznik
+    // stoi w najbliższym widocznym miejscu, z przerywanym obrysem.
+    'dra-pin.dra-concealed,dra-hibadge.dra-concealed{border-style:dashed!important;opacity:.8!important;}',
 
     'dra-tip{position:absolute!important;transform:translateX(-50%)!important;background:#14161c!important;',
     'color:#fff!important;border:0!important;border-radius:8px!important;padding:7px 12px!important;',
@@ -394,6 +397,200 @@
   }
 
   /* --------------------------------------------------------------------- */
+  /*  Widoczność (akordeony, zakładki, karuzele)                           */
+  /* --------------------------------------------------------------------- */
+
+  /*
+   * Przeglądarka podaje położenie także tekstu, którego nie widać: w zwiniętym
+   * <details> (akordeony Atomic v4), w treści ukrytej stylami (zakładki,
+   * klasyczny akordeon) czy poza kadrem karuzeli. Nakładka leży nad stroną,
+   * więc nic jej nie przycina – sprawdzamy to sami. Wyniki trzymamy tylko
+   * w obrębie jednego przerysowania.
+   */
+  var visCache = null;
+
+  function cached(key, el, compute) {
+    if (!visCache) return compute();
+    var map = visCache[key];
+    if (map.has(el)) return map.get(el);
+    var value = compute();
+    map.set(el, value);
+    return value;
+  }
+
+  /** Element, który ukrywa `el` (zwinięty <details> albo ukrycie stylami), lub null. */
+  function concealer(el) {
+    if (!el || el.nodeType !== 1) return null;
+    return cached('concealer', el, function () {
+      for (var cur = el; cur && cur !== doc.documentElement; cur = cur.parentElement) {
+        var parent = cur.parentElement;
+        if (parent && parent.tagName === 'DETAILS' && !parent.open && cur.tagName !== 'SUMMARY') return parent;
+        var cs = win.getComputedStyle(cur);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.contentVisibility === 'hidden') return cur;
+      }
+      return null;
+    });
+  }
+
+  /**
+   * Obszar ekranu, do którego przycinają `el` przodkowie z ukrytym
+   * przepełnieniem (np. kadr karuzeli). null – brak przycinania.
+   */
+  function clipRect(el) {
+    if (!el || el.nodeType !== 1) return null;
+    return cached('clip', el, function () {
+      var clip = null;
+      for (var cur = el.parentElement; cur && cur !== doc.body && cur !== doc.documentElement; cur = cur.parentElement) {
+        var cs = win.getComputedStyle(cur);
+        var cx = cs.overflowX !== 'visible';
+        var cy = cs.overflowY !== 'visible';
+        if (!cx && !cy) continue;
+        var b = cur.getBoundingClientRect();
+        if (!clip) clip = { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
+        if (cx) { clip.left = Math.max(clip.left, b.left); clip.right = Math.min(clip.right, b.right); }
+        if (cy) { clip.top = Math.max(clip.top, b.top); clip.bottom = Math.min(clip.bottom, b.bottom); }
+      }
+      return clip;
+    });
+  }
+
+  function intersect(r, clip) {
+    if (!clip) return r;
+    var left = Math.max(r.left, clip.left);
+    var top = Math.max(r.top, clip.top);
+    var right = Math.min(r.right, clip.right);
+    var bottom = Math.min(r.bottom, clip.bottom);
+    if (right - left < 0.5 || bottom - top < 0.5) return null;
+    return { left: left, top: top, right: right, bottom: bottom, width: right - left, height: bottom - top };
+  }
+
+  function clamp(v, min, max) {
+    return max < min ? (min + max) / 2 : Math.min(max, Math.max(min, v));
+  }
+
+  function isShown(el) {
+    if (!el || concealer(el)) return false;
+    var b = el.getBoundingClientRect();
+    return b.width > 1 && b.height > 1;
+  }
+
+  /**
+   * Najbliższe widoczne miejsce zastępujące ukryty element: zwinięty
+   * <details> (widać jego <summary>), widoczny sąsiad – tytuł akordeonu,
+   * aktywna zakładka – a w ostateczności widoczny przodek.
+   * `edge` mówi, przy której krawędzi postawić znacznik.
+   */
+  function visibleProxy(hider) {
+    if (hider.tagName === 'DETAILS' && isShown(hider)) return { el: hider, edge: 'bottom' };
+    var s;
+    for (s = hider.previousElementSibling; s; s = s.previousElementSibling) {
+      if (isShown(s)) return { el: s, edge: 'bottom' };
+    }
+    for (s = hider.nextElementSibling; s; s = s.nextElementSibling) {
+      if (isShown(s)) return { el: s, edge: 'top' };
+    }
+    for (var cur = hider.parentElement; cur && cur !== doc.documentElement; cur = cur.parentElement) {
+      if (isShown(cur)) return { el: cur, edge: 'inside' };
+    }
+    return null;
+  }
+
+  /**
+   * Punkt znacznika dla elementu `el`: gdy element jest ukryty albo punkt
+   * leży poza kadrem, przesuwamy go do najbliższego widocznego miejsca.
+   */
+  function placeVisible(el, pt) {
+    var hider = concealer(el);
+    if (hider) {
+      var proxy = visibleProxy(hider);
+      if (!proxy) return { x: pt.x, y: pt.y, concealed: true };
+      var b = proxy.el.getBoundingClientRect();
+      var cb = intersect(b, clipRect(proxy.el)) || b;
+      // Ukryty element zwykle nie ma położenia (0, 0) – wtedy lewa krawędź.
+      var x = pt.x || pt.y ? pt.x : cb.left;
+      var y = proxy.edge === 'bottom' ? cb.bottom : proxy.edge === 'top' ? cb.top : clamp(pt.y, cb.top, cb.bottom);
+      return { x: clamp(x, cb.left + 13, cb.right - 13), y: y, concealed: true };
+    }
+    var clip = clipRect(el);
+    if (clip && (pt.x < clip.left || pt.x > clip.right || pt.y < clip.top || pt.y > clip.bottom)) {
+      return { x: clamp(pt.x, clip.left + 13, clip.right - 13), y: clamp(pt.y, clip.top + 13, clip.bottom - 13), concealed: true };
+    }
+    return { x: pt.x, y: pt.y, concealed: false };
+  }
+
+  /** Węzły tekstowe (z treścią) leżące w zakresie. */
+  function textNodesIn(range) {
+    var root = range.commonAncestorContainer;
+    if (root.nodeType === 3) return root.nodeValue.trim() ? [root] : [];
+    var out = [];
+    var walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = walker.nextNode())) {
+      if (n.nodeValue.trim() && range.intersectsNode(n) && !isOurs(n)) out.push(n);
+    }
+    return out;
+  }
+
+  /** Część zakresu w jednym węźle tekstowym. */
+  function nodeSlice(range, node) {
+    var r = doc.createRange();
+    r.setStart(node, node === range.startContainer ? range.startOffset : 0);
+    r.setEnd(node, node === range.endContainer ? range.endOffset : node.nodeValue.length);
+    return r;
+  }
+
+  /** Widoczne prostokąty fragmentu tekstu (bez ukrytych i przyciętych). */
+  function visibleSliceRects(slice, node) {
+    var out = [];
+    var el = node.parentElement;
+    if (!el || concealer(el)) return out;
+    var clip = clipRect(el);
+    var raw = null;
+    try { raw = slice.getClientRects(); } catch (e) { raw = null; }
+    for (var i = 0; raw && i < raw.length; i++) {
+      if (raw[i].width < 0.5 || raw[i].height < 0.5) continue;
+      var r = intersect(raw[i], clip);
+      if (r) out.push(r);
+    }
+    return out;
+  }
+
+  /**
+   * Część zakresu, którą widać – zaznaczenie wychodzące np. do zwiniętej
+   * treści akordeonu jest przycinane do widocznego tekstu. null – nic nie widać.
+   */
+  function visiblePart(range) {
+    var nodes = textNodesIn(range);
+    var first = null;
+    var last = null;
+    for (var i = 0; i < nodes.length; i++) {
+      if (visibleSliceRects(nodeSlice(range, nodes[i]), nodes[i]).length) {
+        if (!first) first = nodes[i];
+        last = nodes[i];
+      }
+    }
+    if (!first) return null;
+    var r = range.cloneRange();
+    if (first !== range.startContainer) r.setStart(first, 0);
+    if (last !== range.endContainer) r.setEnd(last, last.nodeValue.length);
+    return r;
+  }
+
+  /** Rozwija zwinięte <details>, w których leży węzeł. Zwraca true, gdy coś rozwinięto. */
+  function revealDetails(node) {
+    var opened = false;
+    var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    for (var cur = el; cur && cur !== doc.documentElement; cur = cur.parentElement) {
+      var parent = cur.parentElement;
+      if (parent && parent.tagName === 'DETAILS' && !parent.open && cur.tagName !== 'SUMMARY') {
+        parent.open = true;
+        opened = true;
+      }
+    }
+    return opened;
+  }
+
+  /* --------------------------------------------------------------------- */
   /*  Kotwiczenie tekstu                                                   */
   /* --------------------------------------------------------------------- */
 
@@ -482,22 +679,27 @@
     return range || findByText(anchor.text);
   }
 
-  function rectsFor(anchor) {
+  /**
+   * Podświetlenie zakresu: widoczne prostokąty (fragmenty w ukrytych
+   * i przyciętych miejscach są pomijane). Gdy nie widać nic, `point` wskazuje
+   * najbliższe widoczne miejsce na numer komentarza. null – brak zakresu.
+   */
+  function marksForRange(range) {
+    var rects = [];
+    var nodes = textNodesIn(range);
+    for (var i = 0; i < nodes.length; i++) {
+      rects = rects.concat(visibleSliceRects(nodeSlice(range, nodes[i]), nodes[i]));
+    }
+    if (rects.length || !nodes.length) return { rects: rects, concealed: false, point: null };
+    var first = nodes[0];
+    var b = nodeSlice(range, first).getBoundingClientRect();
+    var spot = placeVisible(first.parentElement, { x: b.left, y: b.top + b.height / 2 });
+    return { rects: rects, concealed: true, point: { x: spot.x, y: spot.y } };
+  }
+
+  function marksFor(anchor) {
     var range = buildRange(anchor);
-    if (!range) return [];
-    var raw = null;
-    try { raw = range.getClientRects(); } catch (e) { raw = null; }
-    var out = [];
-    if (raw && raw.length) {
-      for (var i = 0; i < raw.length; i++) {
-        if (raw[i].width >= 0.5 && raw[i].height >= 0.5) out.push(raw[i]);
-      }
-    }
-    if (!out.length) {
-      var b = range.getBoundingClientRect();
-      if (b && b.width >= 0.5 && b.height >= 0.5) out.push(b);
-    }
-    return out;
+    return range ? marksForRange(range) : null;
   }
 
   function serializeRange(range) {
@@ -556,7 +758,9 @@
   /**
    * Pozycja pinezki we współrzędnych viewportu ramki. Jeśli element docelowy
    * da się odnaleźć, pozycja liczona jest z jego aktualnego położenia –
-   * w przeciwnym razie używane są zapisane współrzędne dokumentu.
+   * w przeciwnym razie używane są zapisane współrzędne dokumentu. Gdy element
+   * jest teraz ukryty (akordeon, zakładka, slajd poza kadrem), pinezka stoi
+   * w najbliższym widocznym miejscu i ma `concealed: true`.
    */
   function pinViewportPoint(anchor) {
     var t = anchor && anchor.target;
@@ -564,10 +768,11 @@
       var el = elementForTarget(t);
       if (el && el.getBoundingClientRect) {
         var r = el.getBoundingClientRect();
-        if (r.width > 0 || r.height > 0) {
-          var fx = typeof t.fx === 'number' ? t.fx : 0.5;
-          var fy = typeof t.fy === 'number' ? t.fy : 0.5;
-          return { x: r.left + fx * r.width, y: r.top + fy * r.height, anchored: true };
+        var fx = typeof t.fx === 'number' ? t.fx : 0.5;
+        var fy = typeof t.fy === 'number' ? t.fy : 0.5;
+        var spot = placeVisible(el, { x: r.left + fx * r.width, y: r.top + fy * r.height });
+        if (spot.concealed || r.width > 0 || r.height > 0) {
+          return { x: spot.x, y: spot.y, anchored: true, concealed: spot.concealed };
         }
       }
     }
@@ -576,6 +781,7 @@
       x: (typeof anchor.x === 'number' ? anchor.x : 0) - off.x,
       y: (typeof anchor.y === 'number' ? anchor.y : 0) - off.y,
       anchored: false,
+      concealed: false,
     };
   }
 
@@ -598,9 +804,9 @@
     var t = c.anchor.target;
     if (!t || !t.xpath) return;
     var el = elementForTarget(t);
-    if (!el || !el.getBoundingClientRect) return;
-    var r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return;
+    if (!el || !el.getBoundingClientRect || concealer(el)) return;
+    var r = intersect(el.getBoundingClientRect(), clipRect(el));
+    if (!r || r.width < 1 || r.height < 1) return;
     var box = doc.createElement('dra-outline');
     box.style.left = r.left + 'px';
     box.style.top = r.top + 'px';
@@ -622,17 +828,36 @@
     };
   }
 
-  function makePin(comment, label, x, y, pending) {
+  var CONCEALED_TITLE = 'Element jest teraz ukryty (np. zwinięty akordeon, zakładka lub slajd)';
+
+  function makePin(comment, label, x, y, pending, concealed) {
     var el = doc.createElement('dra-pin');
     el.className = 'dra-pin'
       + (comment.resolved ? ' dra-resolved' : '')
       + (pending ? ' dra-pending' : '')
+      + (concealed ? ' dra-concealed' : '')
       + (!pending && state.selectedId === comment.id ? ' dra-selected' : '');
     if (!pending) el.setAttribute('data-comment-id', comment.id);
+    if (concealed) el.setAttribute('title', CONCEALED_TITLE);
     el.textContent = label == null ? '' : String(label);
     el.style.left = x + 'px';
     el.style.top = y + 'px';
     return el;
+  }
+
+  /** Numer komentarza tekstowego, gdy cały zaznaczony tekst jest ukryty. */
+  function appendConcealedBadge(comment, num, point) {
+    var badge = doc.createElement('dra-hibadge');
+    badge.className = 'dra-hibadge dra-concealed'
+      + (comment.resolved ? ' dra-resolved' : '')
+      + (state.selectedId === comment.id ? ' dra-selected' : '');
+    badge.setAttribute('data-comment-id', comment.id);
+    badge.setAttribute('title', CONCEALED_TITLE);
+    badge.textContent = String(num);
+    badge.style.left = point.x + 'px';
+    badge.style.top = point.y + 'px';
+    hlLayer.appendChild(badge);
+    return { x: point.x, y: point.y };
   }
 
   function appendHighlight(comment, rects, num, pending) {
@@ -685,8 +910,10 @@
   function render() {
     if (!overlay || !overlay.parentNode) return;
     clearLayers();
+    visCache = { concealer: new Map(), clip: new Map() };
 
     var missing = [];
+    var concealed = [];
     var haloPoint = null;
 
     for (var i = 0; i < state.comments.length; i++) {
@@ -695,12 +922,19 @@
       if (state.hiddenIds[c.id]) continue;
       if (c.type === 'pin') {
         var pt = pinViewportPoint(c.anchor);
-        pinLayer.appendChild(makePin(c, i + 1, pt.x, pt.y, false));
+        if (pt.concealed) concealed.push(c.id);
+        pinLayer.appendChild(makePin(c, i + 1, pt.x, pt.y, false, pt.concealed));
         if (c.id === state.selectedId) haloPoint = { x: pt.x, y: pt.y, resolved: !!c.resolved };
       } else {
-        var rects = rectsFor(c.anchor);
-        if (!rects.length) { missing.push(c.id); continue; }
-        var badgePoint = appendHighlight(c, rects, i + 1, false);
+        var marks = marksFor(c.anchor);
+        if (!marks || (!marks.rects.length && !marks.point)) { missing.push(c.id); continue; }
+        var badgePoint;
+        if (marks.rects.length) {
+          badgePoint = appendHighlight(c, marks.rects, i + 1, false);
+        } else {
+          concealed.push(c.id);
+          badgePoint = appendConcealedBadge(c, i + 1, marks.point);
+        }
         if (c.id === state.selectedId && badgePoint) {
           haloPoint = { x: badgePoint.x, y: badgePoint.y, resolved: !!c.resolved };
         }
@@ -715,24 +949,18 @@
         var ppt = pinViewportPoint(p.anchor);
         pinLayer.appendChild(makePin({}, '✎', ppt.x, ppt.y, true));
       } else if (p.range) {
-        var pr = null;
-        try { pr = p.range.getClientRects(); } catch (e) { pr = null; }
-        if (pr && pr.length) {
-          var list = [];
-          for (var k = 0; k < pr.length; k++) {
-            if (pr[k].width >= 0.5 && pr[k].height >= 0.5) list.push(pr[k]);
-          }
-          appendHighlight({}, list, null, true);
-        }
+        var pm = marksForRange(p.range);
+        if (pm.rects.length) appendHighlight({}, pm.rects, null, true);
       }
     }
 
     drawSelectedOutline();
+    visCache = null;
 
-    var key = missing.join(',');
+    var key = missing.join(',') + '|' + concealed.join(',');
     if (key !== state.missingKey) {
       state.missingKey = key;
-      post('missing', { ids: missing });
+      post('missing', { ids: missing, concealed: concealed });
     }
   }
 
@@ -769,6 +997,11 @@
     if (!range.commonAncestorContainer || !doc.body
       || !doc.body.contains(range.commonAncestorContainer)) { clearSelectionTip(); return; }
     if (isOurs(range.commonAncestorContainer)) { clearSelectionTip(); return; }
+
+    // Zaznaczenie wychodzące poza widoczny tekst (np. do zwiniętej treści
+    // akordeonu) zapisujemy tylko w widocznej części.
+    range = visiblePart(range);
+    if (!range) { clearSelectionTip(); return; }
 
     var text = range.toString().replace(/\s+/g, ' ').trim();
     if (!text) { clearSelectionTip(); return; }
@@ -1040,14 +1273,33 @@
     }
     if (!c || !c.anchor) return;
 
+    // Komentarz w zwiniętym akordeonie (<details>): najpierw go rozwiń,
+    // a przewiń dopiero po animacji rozwijania.
+    var node = null;
+    if (c.type === 'pin') {
+      node = c.anchor.target && c.anchor.target.xpath ? elementForTarget(c.anchor.target) : null;
+    } else {
+      var range = buildRange(c.anchor);
+      node = range && range.startContainer;
+    }
+    if (node && revealDetails(node)) {
+      setTimeout(function () { render(); scrollToComment(c); }, 380);
+      return;
+    }
+    scrollToComment(c);
+  }
+
+  function scrollToComment(c) {
     if (c.type === 'pin') {
       var pt = pinViewportPoint(c.anchor);
       scrollToY(scrollOffsets().y + pt.y - win.innerHeight / 2);
       return;
     }
-    var rects = rectsFor(c.anchor);
-    if (!rects.length) return;
-    scrollToY(scrollOffsets().y + rects[0].top - win.innerHeight / 3);
+    var marks = marksFor(c.anchor);
+    if (!marks) return;
+    var top = marks.rects.length ? marks.rects[0].top : marks.point && marks.point.y;
+    if (typeof top !== 'number') return;
+    scrollToY(scrollOffsets().y + top - win.innerHeight / 3);
   }
 
   win.addEventListener('message', function (e) {

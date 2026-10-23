@@ -57,6 +57,7 @@ let currentPage = '';     // strona aktualnie otwarta w podglądzie (plik albo �
 let currentPostId = null; // ID wpisu WordPressa otwartej strony (strony na żywo)
 let pendingFocusId = null; // komentarz, do którego wracamy po wczytaniu innej strony
 let missingIds = new Set();
+let concealedIds = new Set(); // miejsca, które są teraz ukryte (akordeon, zakładka, slajd)
 let hideResolved = localStorage.getItem(FILTER_KEY) === '1';
 let toastTimer = null;
 
@@ -293,6 +294,11 @@ function renderList() {
       broken.className = 'broken';
       broken.textContent = '⚠ Nie można odnaleźć tego miejsca na stronie (strona mogła się zmienić).';
       li.appendChild(broken);
+    } else if (concealedIds.has(comment.id)) {
+      const note = document.createElement('div');
+      note.className = 'concealed';
+      note.textContent = 'Miejsce jest teraz ukryte na stronie (np. zwinięty akordeon, zakładka lub slajd).';
+      li.appendChild(note);
     }
 
     const foot = document.createElement('div');
@@ -378,6 +384,7 @@ function openPage(page, focusId) {
 function loadInFrame(url, focusId) {
   pendingFocusId = focusId || null;
   missingIds = new Set();
+  concealedIds = new Set();
   childReady = false;
   childAlive = false;
   hideLost();
@@ -548,6 +555,7 @@ function showLost() {
     currentPage = '';
     currentPostId = null;
     missingIds = new Set();
+    concealedIds = new Set();
     renderMeta();
     renderList();
   }
@@ -624,6 +632,7 @@ window.addEventListener('message', (e) => {
         currentPage = page;
         currentPostId = postId;
         missingIds = new Set();
+        concealedIds = new Set();
         renderMeta();
         renderList();
       }
@@ -668,6 +677,7 @@ window.addEventListener('message', (e) => {
       break;
     case 'missing':
       missingIds = new Set(d.ids || []);
+      concealedIds = new Set(d.concealed || []);
       renderList();
       break;
     default:
@@ -716,6 +726,7 @@ async function init() {
     comments = data.comments || [];
     activeId = null;
     missingIds = new Set();
+    concealedIds = new Set();
 
     nameEl.textContent = project.name;
     nameEl.title = project.name;

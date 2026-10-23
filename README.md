@@ -240,6 +240,31 @@ automatycznie przełącza też listę i numerację pinezek.
   jest awaryjne wyszukiwanie tekstu. Gdy i to zawiedzie, komentarz nadal jest
   widoczny na liście z ostrzeżeniem „Nie można odnaleźć tego miejsca na stronie”.
 
+### Ukryte miejsca (akordeony, zakładki, karuzele)
+
+Komentarz może dotyczyć miejsca, którego chwilowo nie widać: treści zwiniętego
+akordeonu (`<details>` w Atomic v4 albo klasyczny akordeon), nieaktywnej
+zakładki czy slajdu poza kadrem karuzeli. Warstwa adnotacji:
+
+- **nie rysuje podświetleń w ukrytych miejscach** – zaznaczenie obejmujące
+  tytuł akordeonu i jego zwiniętą treść podświetla tylko tytuł; fragmenty
+  przycięte przez kontener z ukrytym przepełnieniem (np. kadr karuzeli) też
+  są pomijane,
+- **pinezkę zostawia widoczną** – stoi w najbliższym widocznym miejscu (dolna
+  krawędź tytułu akordeonu, widoczna zakładka, brzeg kadru karuzeli) i ma
+  przerywany obrys; tak samo numer komentarza tekstowego, gdy cały tekst
+  jest ukryty,
+- na liście komentarzy dopisuje „Miejsce jest teraz ukryte na stronie” (bez
+  czerwonego ostrzeżenia – miejsce istnieje, tylko go nie widać),
+- po kliknięciu komentarza w zwiniętym `<details>` **sam rozwija akordeon**
+  i przewija do komentarza (akordeonów sterowanych skryptem, np. klasycznego
+  akordeonu Elementora, nie rozwija),
+- przy tworzeniu zaznaczenia wychodzącego poza widoczny tekst zapisuje tylko
+  jego widoczną część.
+
+Za ukryte nie jest uznawany tekst o przezroczystości 0 – od niej startują
+animacje wejścia Elementora.
+
 ### Strony zbudowane w Elementorze
 
 XPath rozjeżdża się, gdy ktoś doda sekcję wyżej albo przesunie blok. Dlatego

@@ -727,6 +727,12 @@ body.viewer { overflow: hidden; }
   margin-left: 1.85rem;
   margin-top: .2rem;
 }
+.concealed {
+  font-size: .74rem;
+  color: var(--muted);
+  margin-left: 1.85rem;
+  margin-top: .2rem;
+}
 
 @media (max-width: 860px) {
   .viewer-body { flex-direction: column; }
