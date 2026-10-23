@@ -663,6 +663,10 @@ window.addEventListener('message', (e) => {
           activeId = id;
           renderList();
           postToChild({ type: 'focus', id });
+        } else {
+          // Komentarz zniknął albo strona przekierowała się na inny adres –
+          // bez tego komunikatu kliknięcie kończyło się ciszą.
+          toast('Nie znaleziono tego komentarza na wczytanej stronie', true);
         }
       }
       break;

@@ -128,6 +128,9 @@ Jak to działa:
   się **tylko wtedy, gdy ramką jest widok Design Review** (rozpoznaje go po
   adresie, z którego sam został pobrany). Zwykli odwiedzający, a także obce
   strony osadzające witrynę w ramce, nie widzą żadnej zmiany i nic nie dostają.
+- Adres skryptu zawiera wersję treści (`/annotator.js?v=…`), a ta wersja jest
+  cache'owana „na zawsze”. Po aktualizacji aplikacji numer się zmienia, więc
+  przeglądarka ani cache pośredni nie podadzą starej warstwy adnotacji.
 - Komentarz zapamiętuje ścieżkę podstrony (np. `/oferta/`; przy odnośnikach
   `?p=123` / `?page_id=123` także ten parametr) oraz **ID wpisu WordPressa**
   (z klas `page-id-…` / `postid-…` na `<body>`) – dzięki temu zostaje na swojej
@@ -166,7 +169,14 @@ Wymagania i ograniczenia:
   lub Cloudflare). Skrypt tego nie obejdzie – w takim przypadku potrzebna jest
   zmiana konfiguracji albo plugin (planowany).
 - Wtyczki optymalizujące (WP Rocket, Autoptimize, LiteSpeed): wyklucz
-  `annotator.js` z łączenia i opóźniania skryptów.
+  `annotator.js` z łączenia i opóźniania skryptów (nazwa pliku występuje
+  w adresie także w wersji z `?v=…`, więc wykluczaj po nazwie, nie po całym
+  adresie).
+- Jeśli recenzowana strona ma własną politykę **CSP**, musi dopuszczać warstwę
+  adnotacji: `script-src` – origin aplikacji (wczytanie `/annotator.js`),
+  `style-src` – `'unsafe-inline'` (warstwa wstrzykuje własny element `<style>`),
+  `frame-ancestors` – origin aplikacji. Bez tego skrypt się nie wczyta albo
+  nakładka nie dostanie stylów i znaczniki będą niewidoczne.
 - Recenzować da się strony dostępne publicznie. Podgląd wersji roboczych
   (`?preview=true`) wymaga zalogowania do WordPressa, a ciasteczka logowania
   nie są wysyłane w ramce z innej domeny.
@@ -409,8 +419,10 @@ archiwum ZIP, podmianę plików bez zmiany linku (nowa treść, usunięcie stary
 plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
-(walidacja adresu, skrypt do wklejenia, klucze podstron, ID wpisu, odrzucanie
-obcych domen, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
+(walidacja adresu, skrypt do wklejenia wraz z wersją, klucze podstron, ID wpisu,
+odrzucanie obcych domen i kluczy wskazujących inny host, nagłówki cache warstwy
+adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
+zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
 
 ## Bezpieczeństwo i ograniczenia

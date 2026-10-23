@@ -2,6 +2,7 @@
 
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -17,6 +18,20 @@ const MAX_UPLOAD = 50 * 1024 * 1024; // 50 MB
 // Publiczny adres aplikacji (np. za odwrotnym proxy z HTTPS). Trafia do
 // skryptu, który wkleja się na recenzowanej stronie WordPress.
 const PUBLIC_URL = String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+
+/**
+ * Wersja warstwy adnotacji: skrót treści `public/annotator.js`. Trafia do
+ * adresu skryptu (`/annotator.js?v=…`) wklejanego na strony na żywo oraz do
+ * stron z ZIP-a, dzięki czemu po aktualizacji aplikacji przeglądarki ani cache
+ * pośrednie (Cloudflare, wtyczki) nie podadzą starej wersji.
+ */
+const ANNOTATOR_FILE = path.join(store.PUBLIC_DIR, 'annotator.js');
+const ANNOTATOR_JS = (() => {
+  try { return fs.readFileSync(ANNOTATOR_FILE); } catch { return null; }
+})();
+const ANNOTATOR_VERSION = ANNOTATOR_JS
+  ? crypto.createHash('sha1').update(ANNOTATOR_JS).digest('hex').slice(0, 12)
+  : 'dev';
 
 const app = express();
 app.disable('x-powered-by');
@@ -107,7 +122,7 @@ function publicOrigin(req) {
 }
 
 function annotatorSnippet(req) {
-  return '<script src="' + publicOrigin(req) + '/annotator.js" defer></script>';
+  return '<script src="' + publicOrigin(req) + '/annotator.js?v=' + ANNOTATOR_VERSION + '" defer></script>';
 }
 
 /** Adres strony do recenzji: tylko http(s), bez danych logowania i kotwicy. */
@@ -740,7 +755,7 @@ function isUtf8(buffer) {
  */
 function injectAnnotator(html, page) {
   const clean = html.replace(CSP_META_RE, '');
-  const tag = '<script src="/annotator.js" data-page="' + escapeAttr(page) + '"></script>';
+  const tag = '<script src="/annotator.js?v=' + ANNOTATOR_VERSION + '" data-page="' + escapeAttr(page) + '"></script>';
   if (/<\/body\s*>/i.test(clean)) return clean.replace(/<\/body\s*>/i, tag + '\n</body>');
   if (/<\/html\s*>/i.test(clean)) return clean.replace(/<\/html\s*>/i, tag + '\n</html>');
   return clean + '\n' + tag;
@@ -836,6 +851,19 @@ app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (homePath(req)) return auth.requireAuthPage(req, res, next);
   next();
+});
+
+/**
+ * Warstwa adnotacji. Wersjonowany adres (`?v=<hash>`) można trzymać w cache
+ * „na zawsze”, a adres bez wersji – tylko z każdorazowym sprawdzeniem
+ * (`no-cache`), żeby po aktualizacji nikt nie utknął na starej wersji.
+ */
+app.get('/annotator.js', (req, res) => {
+  if (!ANNOTATOR_JS) return res.status(404).type('js').send('// brak pliku annotator.js');
+  const versioned = ANNOTATOR_VERSION !== 'dev' && String(req.query.v || '') === ANNOTATOR_VERSION;
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', versioned ? 'public, max-age=31536000, immutable' : 'no-cache');
+  res.send(ANNOTATOR_JS);
 });
 
 app.use(express.static(store.PUBLIC_DIR, { extensions: ['html'], index: 'index.html' }));

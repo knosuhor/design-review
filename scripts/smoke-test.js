@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const ZIP = path.join(__dirname, '..', 'sample', 'landing.zip');
@@ -469,16 +470,36 @@ async function main() {
     JSON.stringify(live.origins) === JSON.stringify(['https://example.com', 'https://www.example.com']),
     JSON.stringify(live.origins));
   check('odpowiedź zawiera skrypt do wklejenia',
-    /<script src="https?:\/\/[^"]+\/annotator\.js" defer><\/script>/.test(liveJson.snippet || ''), liveJson.snippet);
+    /<script src="https?:\/\/[^"]+\/annotator\.js\?v=[0-9a-f]{12}" defer><\/script>/.test(liveJson.snippet || ''),
+    liveJson.snippet);
 
   const listLive = await (await fetch(`${BASE}/api/projects`)).json();
   check('lista projektów podaje skrypt', listLive.snippet === liveJson.snippet);
   check('strona na żywo jest na liście', listLive.projects.some((p) => p.id === live.id && p.kind === 'url'));
 
+  const snippetVersion = /annotator\.js\?v=([0-9a-f]{12})/.exec(liveJson.snippet || '');
   const annRes = await realFetch(`${BASE}/annotator.js`);
   check('annotator.js dostępny publicznie jako JavaScript',
     annRes.status === 200 && /javascript/.test(annRes.headers.get('content-type') || ''),
     `${annRes.status} ${annRes.headers.get('content-type')}`);
+
+  const annBody = await annRes.text();
+  const annHash = crypto.createHash('sha1').update(annBody).digest('hex').slice(0, 12);
+  check('wersja w adresie skryptu zgadza się z treścią pliku',
+    snippetVersion && snippetVersion[1] === annHash, `${snippetVersion && snippetVersion[1]} vs ${annHash}`);
+
+  const annVersioned = await realFetch(`${BASE}/annotator.js?v=${annHash}`);
+  check('wersjonowany adres można cache\'ować „na zawsze”',
+    /immutable/.test(annVersioned.headers.get('cache-control') || ''),
+    annVersioned.headers.get('cache-control'));
+  const annPlain = await realFetch(`${BASE}/annotator.js`);
+  check('adres bez wersji wymaga sprawdzenia w cache (no-cache)',
+    /no-cache/.test(annPlain.headers.get('cache-control') || ''),
+    annPlain.headers.get('cache-control'));
+
+  const zipHtmlForAnnotator = await (await fetch(`${BASE}/p/${project.id}/`)).text();
+  check('strona z ZIP-a też podaje wersję skryptu',
+    zipHtmlForAnnotator.includes(`/annotator.js?v=${annHash}`));
 
   const liveComment = (page, extra) => fetch(`${BASE}/api/projects/${live.id}/comments`, {
     method: 'POST',
