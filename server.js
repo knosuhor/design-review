@@ -14,6 +14,9 @@ const mime = require('./lib/mime');
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 50 * 1024 * 1024; // 50 MB
+// Publiczny adres aplikacji (np. za odwrotnym proxy z HTTPS). Trafia do
+// skryptu, który wkleja się na recenzowanej stronie WordPress.
+const PUBLIC_URL = String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
 
 const app = express();
 app.disable('x-powered-by');
@@ -61,19 +64,91 @@ async function renameWithRetry(from, to) {
   throw lastErr;
 }
 
+function isUrlProject(project) {
+  return Boolean(project && project.kind === 'url');
+}
+
 function projectDto(project) {
-  return {
+  const dto = {
     id: project.id,
+    kind: isUrlProject(project) ? 'url' : 'zip',
     name: project.name,
     entry: project.entry,
     files: project.files,
     size: project.size,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt || null,
-    entryUrl: entryUrl(project.id, project.entry),
+    entryUrl: isUrlProject(project) ? project.url : entryUrl(project.id, project.entry),
     viewPath: '/v/' + project.id,
     locked: Boolean(project.password && project.password.hash),
   };
+  if (isUrlProject(project)) {
+    dto.url = project.url;
+    dto.origin = project.origin;
+    dto.origins = siteOrigins(project.origin);
+  }
+  return dto;
+}
+
+/* ------------------------ strony na żywo (WordPress) ---------------------- */
+
+/** Adres, pod którym recenzowana strona pobiera skrypt warstwy adnotacji. */
+function publicOrigin(req) {
+  return PUBLIC_URL || req.protocol + '://' + req.get('host');
+}
+
+function annotatorSnippet(req) {
+  return '<script src="' + publicOrigin(req) + '/annotator.js" defer></script>';
+}
+
+/** Adres strony do recenzji: tylko http(s), bez danych logowania i kotwicy. */
+function parseSiteUrl(raw) {
+  let value = String(raw == null ? '' : raw).trim();
+  if (!value) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(value)) value = 'https://' + value;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (url.username || url.password || !url.hostname) return null;
+  url.hash = '';
+  return url;
+}
+
+/**
+ * Dozwolone originy podglądu: adres projektu i jego bliźniak z „www.” albo
+ * bez niego – WordPress często przekierowuje między tymi wariantami.
+ */
+function siteOrigins(origin) {
+  const list = [origin];
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    if (host.includes('.') && !/^[\d.]+$/.test(host) && !host.startsWith('[')) {
+      url.hostname = host.startsWith('www.') ? host.slice(4) : 'www.' + host;
+      list.push(url.origin);
+    }
+  } catch {
+    /* zostaje sam origin */
+  }
+  return list;
+}
+
+/**
+ * Klucz podstrony strony na żywo: ścieżka adresu, a przy bezpośrednich
+ * odnośnikach WordPressa (?p=123, ?page_id=123) także ten parametr.
+ * Ta sama reguła działa w annotator.js.
+ */
+function pageKey(url) {
+  const path = url.pathname || '/';
+  for (const param of ['page_id', 'p']) {
+    const value = url.searchParams.get(param);
+    if (value && /^\d+$/.test(value)) return path + '?' + param + '=' + value;
+  }
+  return path;
 }
 
 /* ------------------------- dostęp do strony (hasło) ----------------------- */
@@ -181,7 +256,26 @@ const upload = multer({
 // Lista i modyfikacje projektów są dostępne wyłącznie dla zalogowanego
 // właściciela. Widok recenzji (/v/<id>) i komentarze pozostają publiczne.
 app.get('/api/projects', auth.requireAuthApi, (req, res) => {
-  res.json({ projects: store.listProjects().map(projectDto) });
+  res.json({ projects: store.listProjects().map(projectDto), snippet: annotatorSnippet(req) });
+});
+
+/** Strona na żywo (np. WordPress) – recenzowana pod własnym adresem, bez ZIP-a. */
+app.post('/api/projects/url', auth.requireAuthApi, async (req, res) => {
+  const url = parseSiteUrl((req.body || {}).url);
+  if (!url) return res.status(400).json({ error: 'Podaj poprawny adres strony (http:// lub https://).' });
+
+  const name = clampStr((req.body || {}).name, 120).trim() || url.hostname;
+  const project = {
+    id: store.newId(),
+    kind: 'url',
+    name,
+    url: url.href,
+    origin: url.origin,
+    entry: pageKey(url),
+    createdAt: Date.now(),
+  };
+  await store.addProject(project);
+  res.status(201).json({ project: projectDto(project), snippet: annotatorSnippet(req) });
 });
 
 app.post('/api/projects', auth.requireAuthApi, upload.single('file'), async (req, res) => {
@@ -311,6 +405,9 @@ app.post('/api/projects/:id/password', auth.requireAuthApi, async (req, res) => 
  */
 app.get('/api/projects/:id/archive', requireProjectAccessApi, async (req, res) => {
   const project = req.project;
+  if (isUrlProject(project)) {
+    return res.status(400).json({ error: 'Strona na żywo nie ma plików do pobrania.' });
+  }
 
   try {
     const buffer = await packDir(store.siteDir(project.id));
@@ -337,6 +434,9 @@ app.post('/api/projects/:id/replace', auth.requireAuthApi, upload.single('file')
 
   try {
     if (!project) return res.status(404).json({ error: 'Projekt nie istnieje.' });
+    if (isUrlProject(project)) {
+      return res.status(400).json({ error: 'Strony na żywo nie podmienia się archiwum ZIP.' });
+    }
     if (!req.file) return res.status(400).json({ error: 'Nie przesłano pliku .zip' });
 
     let files;
@@ -447,6 +547,20 @@ function parseTextAnchor(a) {
 async function resolveCommentPage(project, raw) {
   if (raw == null || raw === '') return project.entry;
 
+  // Strona na żywo: klucz podstrony (ścieżka adresu) musi wskazywać ten sam serwis.
+  if (isUrlProject(project)) {
+    const key = String(raw);
+    if (key.length > 2000 || key.charAt(0) !== '/' || key.startsWith('//')) return null;
+    let url;
+    try {
+      url = new URL(key, project.origin);
+    } catch {
+      return null;
+    }
+    if (!siteOrigins(project.origin).includes(url.origin)) return null;
+    return pageKey(url);
+  }
+
   const rel = String(raw).split('#')[0].split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '').trim();
   if (!rel || !/\.html?$/i.test(rel)) return null;
 
@@ -502,6 +616,9 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
     resolved: false,
     createdAt: Date.now(),
   };
+  // ID wpisu WordPressa – komentarz trafia na swoją podstronę także po zmianie jej adresu.
+  const postId = Number(body.postId);
+  if (isUrlProject(project) && Number.isSafeInteger(postId) && postId > 0) comment.postId = postId;
   await store.addComment(project.id, comment);
   res.status(201).json({ comment });
 });
@@ -591,7 +708,7 @@ function injectAnnotator(html, page) {
 
 app.get('/p/:id', (req, res, next) => {
   const project = store.getProject(req.params.id);
-  if (!project) return next();
+  if (!project || isUrlProject(project)) return next();
   // /p/:id/ obsługuje trasę z wildcardem – tutaj przekierowujemy tylko wersję bez ukośnika.
   if (req.originalUrl.replace(/\?.*$/, '').endsWith('/')) return next();
   res.redirect('/p/' + project.id + '/');
@@ -599,7 +716,7 @@ app.get('/p/:id', (req, res, next) => {
 
 app.get('/p/:id/*', async (req, res) => {
   const project = store.getProject(req.params.id);
-  if (!project) return res.status(404).type('html').send('<h1>404 – nie znaleziono strony</h1>');
+  if (!project || isUrlProject(project)) return res.status(404).type('html').send('<h1>404 – nie znaleziono strony</h1>');
 
   const access = projectAccess(req, project);
   if (!access.unlocked) {

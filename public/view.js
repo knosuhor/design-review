@@ -38,6 +38,14 @@ const homeLabel = $('#home-label');
 const resolvedFilter = $('#resolved-filter');
 const scrollEl = $('#sidebar-scroll');
 const toastEl = $('#toast');
+const lostEl = $('#lost');
+const lostTitle = $('#lost-title');
+const lostDesc = $('#lost-desc');
+const lostBack = $('#lost-back');
+const lostOpen = $('#lost-open');
+
+// Czas na odpowiedź warstwy adnotacji po wczytaniu strony w ramce.
+const CHILD_TIMEOUT = 3500;
 
 let project = null;
 let comments = [];
@@ -45,24 +53,56 @@ let pending = null;       // aktualnie tworzony komentarz: {kind, page, anchor, 
 let mode = 'select';
 let activeId = null;
 let childReady = false;
-let currentPage = '';     // plik aktualnie otwarty w podglądzie
+let currentPage = '';     // strona aktualnie otwarta w podglądzie (plik albo ścieżka adresu)
+let currentPostId = null; // ID wpisu WordPressa otwartej strony (strony na żywo)
 let pendingFocusId = null; // komentarz, do którego wracamy po wczytaniu innej strony
 let missingIds = new Set();
 let hideResolved = localStorage.getItem(FILTER_KEY) === '1';
 let toastTimer = null;
 
+// Połączenie z warstwą adnotacji w ramce.
+let allowedOrigins = [location.origin]; // skąd przyjmujemy wiadomości ramki
+let childOrigin = '';     // origin dokumentu, który ostatnio się zgłosił
+let childAlive = false;   // czy obecny dokument w ramce odpowiada
+let everConnected = false;
+let lastGoodUrl = '';     // ostatnia strona, na której warstwa działała
+let aliveTimer = null;
+
 /* ------------------------------- pomocnicze ------------------------------- */
 
-function toast(message, isError) {
+/**
+ * Krótki komunikat u dołu ekranu. Opcjonalny `action` ({ label, href })
+ * dodaje link otwierany w nowej karcie – wtedy komunikat wisi dłużej.
+ */
+function toast(message, isError, action) {
   toastEl.textContent = message;
+  if (action) {
+    const link = document.createElement('a');
+    link.className = 'toast-action';
+    link.href = action.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = action.label;
+    toastEl.append(' ', link);
+  }
   toastEl.classList.toggle('err', !!isError);
+  toastEl.classList.toggle('has-action', !!action);
   toastEl.hidden = false;
   requestAnimationFrame(() => toastEl.classList.add('show'));
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toastEl.classList.remove('show');
     setTimeout(() => { toastEl.hidden = true; }, 220);
-  }, 2600);
+  }, action ? 6000 : 2600);
+}
+
+function isLive() {
+  return !!project && project.kind === 'url';
+}
+
+/** Nazwa strony do wyświetlenia (ścieżki adresów bywają zakodowane). */
+function pageLabel(page) {
+  try { return decodeURI(page); } catch { return page; }
 }
 
 async function api(path, options) {
@@ -78,10 +118,15 @@ async function api(path, options) {
   return data;
 }
 
-function postToChild(message) {
-  if (!iframe.contentWindow) return;
+/**
+ * Wiadomość do warstwy adnotacji. Wysyłana wyłącznie pod origin dokumentu,
+ * który się zgłosił – jeśli ramka przeszła na obcą stronę, nic do niej nie trafi.
+ */
+function postToChild(message, origin) {
+  const target = origin || childOrigin;
+  if (!iframe.contentWindow || !target) return;
   try {
-    iframe.contentWindow.postMessage(Object.assign({ ns: NS }, message), location.origin);
+    iframe.contentWindow.postMessage(Object.assign({ ns: NS }, message), target);
   } catch { /* nic */ }
 }
 
@@ -90,16 +135,28 @@ function hiddenCommentIds() {
   return hideResolved ? comments.filter((c) => c.resolved).map((c) => c.id) : [];
 }
 
+/**
+ * Czy komentarz dotyczy strony otwartej w podglądzie. Na stronie na żywo
+ * liczy się też ID wpisu WordPressa – komentarz zostaje na swojej podstronie
+ * po zmianie jej adresu.
+ */
+function onCurrentPage(c) {
+  if (!currentPage) return false;
+  if (c.page === currentPage) return true;
+  return currentPostId != null && c.postId === currentPostId;
+}
+
 /** Komentarze dotyczące strony aktualnie otwartej w podglądzie. */
 function commentsForPage() {
-  return currentPage ? comments.filter((c) => c.page === currentPage) : [];
+  return comments.filter(onCurrentPage);
 }
 
 /** Numer komentarza w obrębie jego własnej strony (zgodny z numerem pinezki). */
 function commentNumber(comment) {
+  const samePage = onCurrentPage(comment) ? onCurrentPage : (c) => c.page === comment.page;
   let n = 0;
   for (const c of comments) {
-    if (c.page === comment.page) {
+    if (samePage(c)) {
       n++;
       if (c.id === comment.id) return n;
     }
@@ -108,6 +165,7 @@ function commentNumber(comment) {
 }
 
 function pageUrl(page) {
+  if (isLive()) return new URL(page, project.origin).href;
   return '/p/' + encodeURIComponent(projectId) + '/'
     + page.split('/').map(encodeURIComponent).join('/');
 }
@@ -123,12 +181,15 @@ function pushCommentsToChild() {
 function renderMeta() {
   if (!project) return;
   const parts = [];
-  if (currentPage) parts.push(currentPage);
+  if (isLive()) parts.push(new URL(project.origin).host);
+  if (currentPage) parts.push(pageLabel(currentPage));
   parts.push(`${comments.length} komentarz(y)`);
-  parts.push(`${project.files} plik(ów)`);
-  parts.push(formatBytes(project.size));
+  if (!isLive()) {
+    parts.push(`${project.files} plik(ów)`);
+    parts.push(formatBytes(project.size));
+  }
   metaEl.textContent = parts.join(' · ');
-  metaEl.title = currentPage ? 'Otwarta strona: ' + currentPage : '';
+  metaEl.title = currentPage ? 'Otwarta strona: ' + pageLabel(currentPage) : '';
 }
 
 function formatBytes(bytes) {
@@ -178,7 +239,7 @@ function renderList() {
 
   comments.forEach((comment) => {
     if (hideResolved && comment.resolved) return;
-    const onOtherPage = comment.page !== currentPage;
+    const onOtherPage = !onCurrentPage(comment);
     const li = document.createElement('li');
     li.className = 'comment'
       + (comment.id === activeId ? ' active' : '')
@@ -209,8 +270,8 @@ function renderList() {
     if (onOtherPage) {
       const chip = document.createElement('span');
       chip.className = 'page-chip';
-      chip.textContent = comment.page;
-      chip.title = 'Komentarz do strony: ' + comment.page + ' – kliknij, aby ją otworzyć';
+      chip.textContent = pageLabel(comment.page);
+      chip.title = 'Komentarz do strony: ' + pageLabel(comment.page) + ' – kliknij, aby ją otworzyć';
       head.insertBefore(chip, time);
     }
 
@@ -299,7 +360,7 @@ function selectComment(id, scrollPage) {
   renderList();
 
   // Komentarz z innej podstrony: najpierw wczytaj tę stronę, potem go pokaż.
-  if (comment.page && comment.page !== currentPage) {
+  if (comment.page && !onCurrentPage(comment)) {
     openPage(comment.page, id);
     return;
   }
@@ -311,12 +372,20 @@ function selectComment(id, scrollPage) {
 
 /** Wczytuje w podglądzie wskazany plik i (opcjonalnie) podświetla komentarz. */
 function openPage(page, focusId) {
+  loadInFrame(pageUrl(page), focusId);
+}
+
+function loadInFrame(url, focusId) {
   pendingFocusId = focusId || null;
   missingIds = new Set();
   childReady = false;
+  childAlive = false;
+  hideLost();
   loader.hidden = false;
   pinToggle.disabled = true;
-  iframe.src = pageUrl(page);
+  iframe.src = url;
+  // Bezpiecznik na wypadek, gdyby ramka w ogóle nie zgłosiła wczytania.
+  armAliveCheck(CHILD_TIMEOUT * 4);
 }
 
 /* -------------------------------- formularz -------------------------------- */
@@ -371,6 +440,7 @@ form.addEventListener('submit', async (e) => {
         text,
         type: pending.kind,
         page: pending.page || currentPage,
+        postId: pending.postId || undefined,
         anchor: pending.anchor,
       }),
     });
@@ -439,20 +509,120 @@ copyShare.addEventListener('click', async () => {
 
 /* ------------------------------- komunikacja ------------------------------- */
 
+/** Ścieżka strony z jej adresu – do napisu na przycisku powrotu. */
+function labelForUrl(url) {
+  try {
+    const u = new URL(url, location.href);
+    if (!isLive()) {
+      const m = /^\/p\/[^/]+\/(.*)$/.exec(u.pathname);
+      if (m) return pageLabel(m[1]);
+    }
+    return pageLabel(u.pathname + u.search);
+  } catch {
+    return url;
+  }
+}
+
+function hideLost() {
+  lostEl.hidden = true;
+}
+
+/**
+ * Ramka przestała odpowiadać: wstrzymujemy komentowanie i przykrywamy podgląd.
+ * Przy pierwszym wczytaniu najpewniej brakuje skryptu na stronie albo strona
+ * nie pozwala wyświetlić się w ramce. Później – podgląd opuścił recenzowaną
+ * stronę (przekierowanie, formularz, plik, podstrona bez skryptu).
+ */
+function showLost() {
+  childReady = false;
+  loader.hidden = true;
+  if (mode === 'pin') setMode('select');
+  pinToggle.disabled = true;
+  if (pending) closeForm(false);
+  if (pendingFocusId) {
+    pendingFocusId = null;
+    toast('Nie udało się otworzyć strony z tym komentarzem', true);
+  }
+
+  if (currentPage) {
+    currentPage = '';
+    currentPostId = null;
+    missingIds = new Set();
+    renderMeta();
+    renderList();
+  }
+
+  if (everConnected && lastGoodUrl) {
+    lostTitle.textContent = 'Utracono połączenie z recenzowaną stroną';
+    lostDesc.textContent = 'Podgląd przeszedł na stronę, która nie jest objęta recenzją '
+      + '(np. inną domenę, plik albo podstronę bez skryptu Design Review). Komentowanie jest wstrzymane.';
+    lostBack.textContent = 'Wróć do: ' + labelForUrl(lastGoodUrl);
+    lostBack.dataset.url = lastGoodUrl;
+    lostOpen.hidden = true;
+  } else {
+    const entry = project ? project.entryUrl : '';
+    lostTitle.textContent = 'Strona nie odpowiada';
+    lostDesc.textContent = isLive()
+      ? 'Nie udało się połączyć z recenzowaną stroną. Sprawdź, czy jest na niej dodany skrypt Design Review '
+        + '(i czy wtyczki optymalizujące nie łączą go z innymi skryptami ani nie opóźniają). Jeśli skrypt jest '
+        + 'na miejscu, strona może blokować wyświetlanie w ramce (nagłówki X-Frame-Options lub CSP) – '
+        + 'wtedy potrzebny będzie plugin.'
+      : 'Nie udało się wczytać podglądu strony.';
+    lostBack.textContent = 'Spróbuj ponownie';
+    lostBack.dataset.url = entry;
+    lostOpen.href = entry;
+    lostOpen.hidden = !entry;
+  }
+  lostEl.hidden = false;
+}
+
+/** Jeśli w podanym czasie warstwa adnotacji się nie zgłosi – połączenie zerwane. */
+function armAliveCheck(ms) {
+  clearTimeout(aliveTimer);
+  aliveTimer = setTimeout(() => {
+    if (!childAlive) showLost();
+  }, ms);
+}
+
+function markAlive(origin) {
+  childOrigin = origin;
+  childAlive = true;
+}
+
+lostBack.addEventListener('click', () => {
+  const url = lostBack.dataset.url;
+  if (url) loadInFrame(url);
+});
+
 window.addEventListener('message', (e) => {
-  if (e.origin !== location.origin) return;
+  // Przyjmujemy wyłącznie wiadomości z naszej ramki i z dozwolonych domen.
+  if (e.source !== iframe.contentWindow || !allowedOrigins.includes(e.origin)) return;
   const d = e.data;
   if (!d || d.ns !== NS) return;
 
   switch (d.type) {
+    case 'hello':
+      // Nowy dokument w ramce – uruchom w nim warstwę adnotacji.
+      markAlive(e.origin);
+      postToChild({ type: 'init' });
+      break;
+    case 'alive':
+      markAlive(e.origin);
+      break;
     case 'ready': {
+      markAlive(e.origin);
       childReady = true;
+      everConnected = true;
+      hideLost();
       loader.hidden = true;
       pinToggle.disabled = false;
+      if (typeof d.url === 'string') lastGoodUrl = d.url;
 
       const page = typeof d.page === 'string' ? d.page : '';
-      if (page !== currentPage) {
+      const postId = Number.isSafeInteger(d.postId) && d.postId > 0 ? d.postId : null;
+      if (page !== currentPage || postId !== currentPostId) {
         currentPage = page;
+        currentPostId = postId;
         missingIds = new Set();
         renderMeta();
         renderList();
@@ -467,7 +637,7 @@ window.addEventListener('message', (e) => {
         const id = pendingFocusId;
         pendingFocusId = null;
         const c = comments.find((x) => x.id === id);
-        if (c && c.page === currentPage) {
+        if (c && onCurrentPage(c)) {
           activeId = id;
           renderList();
           postToChild({ type: 'focus', id });
@@ -476,8 +646,23 @@ window.addEventListener('message', (e) => {
       break;
     }
     case 'new-anchor':
-      openForm({ kind: d.kind, page: d.page || currentPage, anchor: d.anchor }, d.preview || '');
+      openForm({
+        kind: d.kind,
+        page: d.page || currentPage,
+        postId: Number.isSafeInteger(d.postId) ? d.postId : null,
+        anchor: d.anchor,
+      }, d.preview || '');
       break;
+    case 'blocked-link': {
+      let href = '';
+      try {
+        const u = new URL(d.url);
+        if (u.protocol === 'http:' || u.protocol === 'https:') href = u.href;
+      } catch { /* nieprawidłowy adres */ }
+      toast('Ten link prowadzi poza recenzowaną stronę.', false,
+        href ? { label: 'Otwórz w nowej karcie ↗', href } : null);
+      break;
+    }
     case 'select-comment':
       selectComment(d.id, false);
       break;
@@ -490,41 +675,16 @@ window.addEventListener('message', (e) => {
   }
 });
 
+/**
+ * Po każdym wczytaniu dokumentu w ramce (także po kliknięciu linku) pytamy,
+ * czy warstwa adnotacji nadal odpowiada. Zapytanie trafia tylko do dozwolonych
+ * domen – obca strona go nie dostanie i nie odpowie.
+ */
 iframe.addEventListener('load', () => {
-  // Po nawigacji wewnątrz podglądu warstwa adnotacji wstrzykuje się od nowa.
-  if (childReady) childReady = false;
-
-  let insideSite = false;
-  try {
-    insideSite = iframe.contentWindow.location.pathname.startsWith('/p/' + projectId + '/');
-  } catch {
-    insideSite = false; // podgląd opuścił naszą domenę
-  }
-
-  if (!insideSite) {
-    // Link zewnętrzny / strona bez warstwy adnotacji – nie pokazujemy pinezek
-    // z poprzedniej podstrony.
-    if (currentPage) {
-      currentPage = '';
-      missingIds = new Set();
-      renderMeta();
-      renderList();
-      pushCommentsToChild();
-    }
-  } else {
-    loader.hidden = false;
-  }
-
-  setTimeout(() => {
-    if (!childReady) {
-      loader.hidden = true;
-      pinToggle.disabled = false;
-      if (pendingFocusId) {
-        pendingFocusId = null;
-        toast('Nie udało się otworzyć strony z tym komentarzem', true);
-      }
-    }
-  }, 3500);
+  if (!iframe.getAttribute('src')) return;
+  childAlive = false;
+  for (const origin of allowedOrigins) postToChild({ type: 'probe' }, origin);
+  armAliveCheck(CHILD_TIMEOUT);
 });
 
 /* --------------------------------- start ---------------------------------- */
@@ -560,14 +720,16 @@ async function init() {
     nameEl.textContent = project.name;
     nameEl.title = project.name;
     currentPage = project.entry;
+    if (isLive()) allowedOrigins = project.origins || [project.origin];
     renderMeta();
     document.title = project.name + ' – Design Review';
     openNew.href = project.entryUrl;
+    // Strona na żywo nie ma plików do pobrania.
     downloadZip.href = `/api/projects/${project.id}/archive`;
-    downloadZip.hidden = false;
+    downloadZip.hidden = isLive();
 
     renderList();
-    iframe.src = project.entryUrl;
+    loadInFrame(project.entryUrl);
   } catch (err) {
     loader.hidden = true;
     nameEl.textContent = 'Nie znaleziono projektu';

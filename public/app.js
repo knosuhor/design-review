@@ -22,6 +22,17 @@ const uidBtn = $('#uid-btn');
 const logoutBtn = $('#logout-btn');
 const replaceInput = $('#replace-file');
 
+const liveForm = $('#live-form');
+const liveUrl = $('#live-url');
+const liveName = $('#live-name');
+const liveBtn = $('#live-btn');
+const liveError = $('#live-error');
+const snippetDialog = $('#snippet-dialog');
+const snippetSite = $('#snippet-site');
+const snippetText = $('#snippet-text');
+const snippetCopy = $('#snippet-copy');
+const snippetClose = $('#snippet-close');
+
 const pwDialog = $('#pw-dialog');
 const pwForm = $('#pw-form');
 const pwInput = $('#pw-input');
@@ -40,6 +51,7 @@ let replaceTarget = null;
 let replaceBtnEl = null;
 let toastTimer = null;
 let currentUid = '';
+let snippet = ''; // skrypt do wklejenia na stronach na żywo (podaje serwer)
 
 /* ------------------------------- pomocnicze ------------------------------- */
 
@@ -89,19 +101,29 @@ function formatDate(ts) {
   });
 }
 
+/**
+ * Zapasowe kopiowanie przez zaznaczenie ukrytego pola. Pole trafia do
+ * otwartego okna dialogowego, bo reszta strony jest wtedy nieaktywna.
+ */
+function copyWithSelection(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  (document.querySelector('dialog[open]') || document.body).appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  if (!ok) throw new Error('copy');
+}
+
 async function copyText(text, okMessage) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
+      // Clipboard API bywa zablokowane (np. w osadzonej przeglądarce).
+      await navigator.clipboard.writeText(text).catch(() => copyWithSelection(text));
     } else {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
+      copyWithSelection(text);
     }
     toast(okMessage || 'Skopiowano do schowka');
   } catch {
@@ -127,9 +149,12 @@ function renderProjects(projects) {
     const item = document.createElement('div');
     item.className = 'project-item';
 
+    const live = project.kind === 'url';
+
     const thumb = document.createElement('div');
-    thumb.className = 'pi-thumb';
-    thumb.textContent = (project.name || '?').trim().charAt(0).toUpperCase() || '?';
+    thumb.className = 'pi-thumb' + (live ? ' live' : '');
+    thumb.textContent = live ? '🌐' : (project.name || '?').trim().charAt(0).toUpperCase() || '?';
+    if (live) thumb.title = 'Strona na żywo';
 
     const main = document.createElement('div');
     main.className = 'pi-main';
@@ -151,11 +176,22 @@ function renderProjects(projects) {
     const dateText = project.updatedAt
       ? `Podmieniono ${formatDate(project.updatedAt)}`
       : formatDate(project.createdAt);
-    meta.innerHTML =
-      `<span${project.updatedAt ? ` title="Wgrano: ${formatDate(project.createdAt)}"` : ''}>${dateText}</span>` +
-      `<span class="dot">·</span><span>${formatBytes(project.size)}</span>` +
-      `<span class="dot">·</span><span>${project.files} plik(ów)</span>` +
-      `<span class="dot">·</span><span><code>${project.entry}</code></span>`;
+    if (live) {
+      const date = document.createElement('span');
+      date.textContent = formatDate(project.createdAt);
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.textContent = '·';
+      const site = document.createElement('code');
+      site.textContent = project.url;
+      meta.append(date, dot, site);
+    } else {
+      meta.innerHTML =
+        `<span${project.updatedAt ? ` title="Wgrano: ${formatDate(project.createdAt)}"` : ''}>${dateText}</span>` +
+        `<span class="dot">·</span><span>${formatBytes(project.size)}</span>` +
+        `<span class="dot">·</span><span>${project.files} plik(ów)</span>` +
+        `<span class="dot">·</span><span><code>${project.entry}</code></span>`;
+    }
 
     const linkRow = document.createElement('div');
     linkRow.className = 'pi-link';
@@ -190,8 +226,16 @@ function renderProjects(projects) {
     openTab.target = '_blank';
     openTab.rel = 'noopener';
     openTab.textContent = '↗';
-    openTab.title = 'Podgląd samej strony w nowej karcie';
-    openTab.setAttribute('aria-label', 'Podgląd samej strony w nowej karcie');
+    openTab.title = live ? 'Otwórz stronę w nowej karcie' : 'Podgląd samej strony w nowej karcie';
+    openTab.setAttribute('aria-label', openTab.title);
+
+    const scriptBtn = document.createElement('button');
+    scriptBtn.className = 'btn icon';
+    scriptBtn.type = 'button';
+    scriptBtn.textContent = '📋';
+    scriptBtn.title = 'Kopiuj skrypt do wklejenia na stronie (jednorazowo)';
+    scriptBtn.setAttribute('aria-label', scriptBtn.title);
+    scriptBtn.addEventListener('click', () => copyScript());
 
     const zipBtn = document.createElement('a');
     zipBtn.className = 'btn icon';
@@ -248,7 +292,8 @@ function renderProjects(projects) {
       }
     });
 
-    actions.append(openBtn, openTab, replaceBtn, zipBtn, pwBtn, delBtn);
+    if (live) actions.append(openBtn, openTab, scriptBtn, pwBtn, delBtn);
+    else actions.append(openBtn, openTab, replaceBtn, zipBtn, pwBtn, delBtn);
     item.append(thumb, main, actions);
     listEl.appendChild(item);
   }
@@ -257,6 +302,7 @@ function renderProjects(projects) {
 async function loadProjects() {
   try {
     const data = await api('/api/projects');
+    if (data.snippet) snippet = data.snippet;
     renderProjects(data.projects || []);
   } catch (err) {
     toast(err.message, true);
@@ -349,6 +395,42 @@ pwRemove.addEventListener('click', async () => {
     pwRemove.disabled = false;
   }
 });
+
+/* ---------------------------- strony na żywo ------------------------------ */
+
+function copyScript() {
+  if (!snippet) return;
+  copyText(snippet, 'Skrypt skopiowany – wklej go na stronie WordPress');
+}
+
+liveForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  liveError.hidden = true;
+  liveBtn.disabled = true;
+  try {
+    const data = await api('/api/projects/url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: liveUrl.value.trim(), name: liveName.value.trim() }),
+    });
+    if (data.snippet) snippet = data.snippet;
+    liveUrl.value = '';
+    liveName.value = '';
+    await loadProjects();
+    snippetSite.textContent = data.project.url;
+    snippetText.value = snippet;
+    snippetDialog.showModal();
+  } catch (err) {
+    liveError.hidden = false;
+    liveError.textContent = err.message;
+  } finally {
+    liveBtn.disabled = false;
+  }
+});
+
+snippetText.addEventListener('focus', () => snippetText.select());
+snippetCopy.addEventListener('click', copyScript);
+snippetClose.addEventListener('click', () => snippetDialog.close());
 
 /* -------------------------------- konto ----------------------------------- */
 

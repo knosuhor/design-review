@@ -441,6 +441,90 @@ async function main() {
   });
   check('hasło usunięte po teście podmiany', clearAfter.status === 200);
 
+  console.log('\n5d. Strona na żywo (WordPress)');
+  const postUrl = (body) => fetch(`${BASE}/api/projects/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const anonLive = await realFetch(`${BASE}/api/projects/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: 'https://example.com/' }),
+  });
+  check('bez logowania nie da się dodać strony (401)', anonLive.status === 401, String(anonLive.status));
+  check('odrzucony adres ftp://', (await postUrl({ url: 'ftp://example.com/' })).status === 400);
+  check('odrzucony pusty adres', (await postUrl({ url: '' })).status === 400);
+  check('odrzucony adres z danymi logowania', (await postUrl({ url: 'https://a:b@example.com/' })).status === 400);
+
+  const liveRes = await postUrl({ url: 'example.com/oferta/#sekcja', name: 'Smoke live' });
+  const liveJson = await liveRes.json();
+  check('dodanie strony na żywo (201)', liveRes.status === 201, JSON.stringify(liveJson));
+  const live = liveJson.project;
+  check('typ projektu: url', live.kind === 'url', live.kind);
+  check('adres uzupełniony o https i bez kotwicy', live.url === 'https://example.com/oferta/', live.url);
+  check('strona startowa to ścieżka adresu', live.entry === '/oferta/', live.entry);
+  check('dozwolone originy obejmują wariant www',
+    JSON.stringify(live.origins) === JSON.stringify(['https://example.com', 'https://www.example.com']),
+    JSON.stringify(live.origins));
+  check('odpowiedź zawiera skrypt do wklejenia',
+    /<script src="https?:\/\/[^"]+\/annotator\.js" defer><\/script>/.test(liveJson.snippet || ''), liveJson.snippet);
+
+  const listLive = await (await fetch(`${BASE}/api/projects`)).json();
+  check('lista projektów podaje skrypt', listLive.snippet === liveJson.snippet);
+  check('strona na żywo jest na liście', listLive.projects.some((p) => p.id === live.id && p.kind === 'url'));
+
+  const annRes = await realFetch(`${BASE}/annotator.js`);
+  check('annotator.js dostępny publicznie jako JavaScript',
+    annRes.status === 200 && /javascript/.test(annRes.headers.get('content-type') || ''),
+    `${annRes.status} ${annRes.headers.get('content-type')}`);
+
+  const liveComment = (page, extra) => fetch(`${BASE}/api/projects/${live.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({
+      author: 'Test', text: 'Na żywo', type: 'pin', page, anchor: { x: 10, y: 20 },
+    }, extra)),
+  });
+
+  const lc1 = await liveComment('/oferta/', { postId: 42 });
+  const lc1Json = await lc1.json();
+  check('komentarz do podstrony na żywo (201)', lc1.status === 201, JSON.stringify(lc1Json));
+  check('zapisano ścieżkę i ID wpisu', lc1Json.comment && lc1Json.comment.page === '/oferta/' && lc1Json.comment.postId === 42,
+    JSON.stringify(lc1Json.comment));
+
+  const lc2 = await (await liveComment('/?p=123&utm_source=x')).json();
+  check('klucz podstrony zachowuje ?p=, pomija inne parametry', lc2.comment && lc2.comment.page === '/?p=123',
+    JSON.stringify(lc2));
+
+  const lc3 = await (await liveComment('', {})).json();
+  check('komentarz bez strony trafia na stronę startową', lc3.comment && lc3.comment.page === '/oferta/',
+    JSON.stringify(lc3));
+
+  check('odrzucona strona z innej domeny', (await liveComment('//evil.com/x')).status === 400);
+  check('odrzucony pełny adres zamiast ścieżki', (await liveComment('https://evil.com/x')).status === 400);
+  const badPost = await (await liveComment('/kontakt/', { postId: 'abc' })).json();
+  check('nieprawidłowe ID wpisu jest pomijane', badPost.comment && !('postId' in badPost.comment),
+    JSON.stringify(badPost));
+
+  const liveArchive = await fetch(`${BASE}/api/projects/${live.id}/archive`);
+  check('strona na żywo nie ma archiwum ZIP (400)', liveArchive.status === 400, String(liveArchive.status));
+
+  const liveReplaceForm = new FormData();
+  liveReplaceForm.append('file', new Blob([fs.readFileSync(ZIP)], { type: 'application/zip' }), 'landing.zip');
+  const liveReplace = await fetch(`${BASE}/api/projects/${live.id}/replace`, { method: 'POST', body: liveReplaceForm });
+  check('strony na żywo nie podmienia się ZIP-em (400)', liveReplace.status === 400, String(liveReplace.status));
+
+  const liveFiles = await fetch(`${BASE}/p/${live.id}/index.html`);
+  check('strona na żywo nie jest serwowana spod /p/ (404)', liveFiles.status === 404, String(liveFiles.status));
+
+  const liveView = await fetch(`${BASE}/v/${live.id}`);
+  check('widok recenzji strony na żywo działa (200)', liveView.status === 200, String(liveView.status));
+
+  const liveDel = await fetch(`${BASE}/api/projects/${live.id}`, { method: 'DELETE' });
+  check('usunięcie strony na żywo', liveDel.status === 200, String(liveDel.status));
+
   console.log('\n6. Sprzątanie');
   const delRes = await fetch(`${BASE}/api/projects/${project.id}`, { method: 'DELETE' });
   check('usunięcie projektu', delRes.status === 200);

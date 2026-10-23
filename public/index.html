@@ -47,6 +47,22 @@
     <p class="error" id="upload-error" hidden></p>
   </section>
 
+  <section class="card live-card">
+    <h2>🌐 Recenzja strony na żywo (WordPress)</h2>
+    <p class="muted">
+      Podaj adres opublikowanej strony. Na stronie trzeba raz dodać krótki skrypt Design Review
+      (pokażemy go po dodaniu) – potem recenzenci komentują ją bezpośrednio, bez pobierania plików.
+    </p>
+    <form id="live-form" autocomplete="off">
+      <div class="upload-row">
+        <input type="text" inputmode="url" id="live-url" placeholder="https://twoja-strona.pl/" maxlength="2000" required spellcheck="false">
+        <input type="text" id="live-name" placeholder="Nazwa projektu (opcjonalnie)" maxlength="120">
+        <button class="btn primary" type="submit" id="live-btn">Dodaj stronę</button>
+      </div>
+    </form>
+    <p class="error" id="live-error" hidden></p>
+  </section>
+
   <section class="projects">
     <div class="section-head">
       <h2>Przesłane strony</h2>
@@ -85,6 +101,27 @@
       <button class="btn primary" type="submit" id="pw-save">Zapisz</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="snippet-dialog" class="dialog wide">
+  <h3>Dodaj skrypt na stronie</h3>
+  <p class="muted small">
+    Strona <b id="snippet-site"></b> została dodana. Żeby recenzenci mogli ją komentować,
+    wklej poniższy skrypt raz na tej stronie – działa na wszystkich jej podstronach.
+  </p>
+  <textarea class="snippet" id="snippet-text" rows="2" readonly spellcheck="false"></textarea>
+  <ol class="muted">
+    <li>Najprościej: wtyczka <b>WPCode</b> (Code Snippets → Header &amp; Footer → <i>Footer</i>)
+      albo <b>Elementor → Custom Code</b> (miejsce: koniec <code>&lt;body&gt;</code>).</li>
+    <li>Jeśli używasz wtyczek optymalizujących (WP Rocket, Autoptimize, LiteSpeed),
+      wyklucz <code>annotator.js</code> z łączenia i opóźniania skryptów.</li>
+    <li>Dla zwykłych odwiedzających skrypt nic nie zmienia – działa tylko w widoku recenzji.</li>
+  </ol>
+  <div class="dialog-actions">
+    <span class="spacer"></span>
+    <button class="btn ghost" type="button" id="snippet-close">Zamknij</button>
+    <button class="btn primary" type="button" id="snippet-copy">📋 Kopiuj skrypt</button>
+  </div>
 </dialog>
 
 <div id="toast" class="toast" hidden></div>

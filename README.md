@@ -1,7 +1,8 @@
 # Design Review
 
-Aplikacja webowa do **komentowania designu stron HTML**. Wgrywasz stronę jako archiwum ZIP,
-wysyłasz recenzentowi link, a on dodaje komentarze w dwóch trybach:
+Aplikacja webowa do **komentowania designu stron HTML**. Wgrywasz stronę jako archiwum ZIP
+albo podajesz adres **opublikowanej strony (np. WordPress)**, wysyłasz recenzentowi link,
+a on dodaje komentarze w dwóch trybach:
 
 - **pinezka** – kliknięcie w konkretne miejsce na stronie,
 - **zaznaczony tekst** – podświetlenie fragmentu tekstu i komentarz do niego.
@@ -43,6 +44,14 @@ Zmienna środowiskowa `PORT` pozwala zmienić port:
 
 ```bash
 set PORT=8080 && npm start
+```
+
+Zmienna `PUBLIC_URL` to publiczny adres aplikacji (np. za odwrotnym proxy z HTTPS).
+Trafia do skryptu, który wkleja się na stronach na żywo — bez niej używany jest adres,
+pod którym otwarto panel:
+
+```bash
+set PUBLIC_URL=https://review.twojadomena.pl && npm start
 ```
 
 ## Logowanie i dostęp
@@ -90,7 +99,72 @@ set PORT=8080 && npm start
   **🗑** usunięcie strony wraz z komentarzami.
   Pełny opis każdej ikony pojawia się po najechaniu myszą. Usunięcie strony
   potwierdzasz oknem dialogowym w stylu aplikacji (nie natywnym oknem
-  przeglądarki).
+  przeglądarki),
+- sekcja **🌐 Recenzja strony na żywo (WordPress)** – dodanie strony po adresie
+  (szczegóły niżej). Przy takich stronach zamiast 🔄 i ⬇ jest ikona
+  **📋 Kopiuj skrypt** – kopiuje do schowka skrypt do wklejenia na stronie.
+
+### Strony na żywo (WordPress)
+
+Opublikowaną stronę można recenzować bezpośrednio, bez pobierania jej plików
+i bez zrzutów ekranu:
+
+1. W sekcji **🌐 Recenzja strony na żywo** podaj adres strony
+   (np. `https://twoja-strona.pl/oferta/`; `https://` można pominąć).
+2. Pojawi się okno z gotowym skryptem i przyciskiem **📋 Kopiuj skrypt**:
+   ```html
+   <script src="https://<adres-design-review>/annotator.js" defer></script>
+   ```
+   Wklej go **raz** na stronie – działa na wszystkich jej podstronach. Najprościej
+   przez wtyczkę **WPCode** (Header & Footer → *Footer*) albo
+   **Elementor → Custom Code** (koniec `<body>`). Skrypt jest ten sam dla
+   wszystkich stron i projektów, więc później można go skopiować ikoną 📋.
+3. Udostępnij link `/v/<id>` jak przy zwykłym projekcie.
+
+Jak to działa:
+
+- Widok recenzji ładuje stronę w ramce. Skrypt na stronie WordPress uruchamia
+  się **tylko wtedy, gdy ramką jest widok Design Review** (rozpoznaje go po
+  adresie, z którego sam został pobrany). Zwykli odwiedzający, a także obce
+  strony osadzające witrynę w ramce, nie widzą żadnej zmiany i nic nie dostają.
+- Komentarz zapamiętuje ścieżkę podstrony (np. `/oferta/`; przy odnośnikach
+  `?p=123` / `?page_id=123` także ten parametr) oraz **ID wpisu WordPressa**
+  (z klas `page-id-…` / `postid-…` na `<body>`) – dzięki temu zostaje na swojej
+  podstronie także po zmianie jej adresu.
+- Dozwolone są adres strony i jego wariant z `www.` albo bez niego
+  (WordPress często między nimi przekierowuje).
+- Treść strony na żywo się zmienia (slidery, doładowywane sekcje), więc warstwa
+  adnotacji przelicza położenie pinezek także po zmianach w DOM-ie.
+
+Nawigacja w podglądzie:
+
+- **Link prowadzący poza recenzowaną stronę** (inna domena) nie przełącza
+  podglądu – pojawia się komunikat z przyciskiem **„Otwórz w nowej karcie ↗”**.
+  Linki z `target="_blank"`, kliknięcia z Ctrl/Cmd, kotwice `#…`, `mailto:`
+  i `tel:` działają normalnie, a linki `target="_top"` otwierają się w podglądzie
+  (zamiast podmieniać cały widok recenzji). To samo dotyczy projektów z ZIP-a.
+- **Jeśli podgląd mimo to opuści recenzowaną stronę** (przekierowanie,
+  formularz, plik, podstrona bez skryptu), widok to wykryje (warstwa adnotacji
+  nie odpowie w ciągu ~3,5 s po wczytaniu) i przykryje podgląd komunikatem
+  **„Utracono połączenie z recenzowaną stroną”** z przyciskiem
+  **„Wróć do: /ostatnia-strona/”**. Komentowanie jest wtedy wstrzymane.
+- Jeśli strona nie odpowie **już przy pierwszym wczytaniu**, komunikat
+  **„Strona nie odpowiada”** podpowiada, że brakuje skryptu albo strona blokuje
+  wyświetlanie w ramce.
+
+Wymagania i ograniczenia:
+
+- Design Review musi być dostępny **publicznie przez HTTPS** (strona na `https://`
+  nie wczyta skryptu z `http://` ani z `localhost`) – ustaw też `PUBLIC_URL`.
+- Strona nie może blokować wyświetlania w ramce nagłówkami `X-Frame-Options`
+  albo CSP `frame-ancestors` (dodają je czasem wtyczki bezpieczeństwa, hosting
+  lub Cloudflare). Skrypt tego nie obejdzie – w takim przypadku potrzebna jest
+  zmiana konfiguracji albo plugin (planowany).
+- Wtyczki optymalizujące (WP Rocket, Autoptimize, LiteSpeed): wyklucz
+  `annotator.js` z łączenia i opóźniania skryptów.
+- Recenzować da się strony dostępne publicznie. Podgląd wersji roboczych
+  (`?preview=true`) wymaga zalogowania do WordPressa, a ciasteczka logowania
+  nie są wysyłane w ramce z innej domeny.
 
 ### Podmiana plików (nowa wersja)
 
@@ -148,7 +222,7 @@ strony:
 ## Kotwiczenie komentarzy
 
 Każdy komentarz zapisuje plik, w którym powstał (`page`, np. `index.html` albo
-`podstrona/o-nas.html`). Warstwa adnotacji otrzymuje **wyłącznie komentarze
+`podstrona/o-nas.html`; dla stron na żywo – ścieżkę adresu, np. `/oferta/`). Warstwa adnotacji otrzymuje **wyłącznie komentarze
 aktualnie otwartej podstrony**, więc XPath z jednego pliku nie trafia
 w przypadkowy element innego — nawet gdy obie strony mają identyczną strukturę.
 Zmiana podstrony w podglądzie (kliknięcie linku albo komentarza z listy)
@@ -183,7 +257,7 @@ public/unlock.js       logika odblokowywania strony
 public/dialog.js       wspólne okno potwierdzenia w stylu aplikacji
 public/view.html       widok recenzji
 public/view.js         logika widoku recenzji (panel komentarzy)
-public/annotator.js    warstwa adnotacji działająca wewnątrz podglądanej strony
+public/annotator.js    warstwa adnotacji działająca wewnątrz podglądanej strony (także wklejana na strony na żywo)
 public/styles.css      style interfejsu
 scripts/smoke-test.js  testy „dymne” API
 data/                  db.json + komentarze + config.json (tworzone automatycznie)
@@ -198,15 +272,16 @@ sample/landing.zip     przykładowa strona do testów
 | `POST` | `/api/login` | publiczny | logowanie: `{ "uid": "…" }`, ustawia ciasteczko sesji |
 | `POST` | `/api/logout` | publiczny | wylogowanie (czyści ciasteczko) |
 | `GET` | `/api/session` | publiczny | `{ authed, uid }` – stan zalogowania dla interfejsu |
-| `GET` | `/api/projects` | **tylko zalogowany** | lista stron |
+| `GET` | `/api/projects` | **tylko zalogowany** | lista stron + `snippet` (skrypt do wklejenia na stronach na żywo) |
 | `POST` | `/api/projects` | **tylko zalogowany** | upload ZIP (`multipart/form-data`: `file`, opcjonalnie `name`) |
-| `POST` | `/api/projects/:id/replace` | **tylko zalogowany** | podmiana plików istniejącej strony (`multipart/form-data`: `file`); link, hasło i komentarze bez zmian |
+| `POST` | `/api/projects/url` | **tylko zalogowany** | strona na żywo: `{ "url": "https://…", "name": "…" }` (nazwa opcjonalna); zwraca projekt i `snippet` |
+| `POST` | `/api/projects/:id/replace` | **tylko zalogowany** | podmiana plików istniejącej strony (`multipart/form-data`: `file`); link, hasło i komentarze bez zmian; nie dotyczy stron na żywo |
 | `DELETE` | `/api/projects/:id` | **tylko zalogowany** | usunięcie strony wraz z komentarzami |
 | `POST` | `/api/projects/:id/password` | **tylko zalogowany** | ustawienie (`{ "password": "…" }`) lub usunięcie (`""`) hasła strony |
 | `GET` | `/api/projects/:id/access` | publiczny | `{ name, locked, unlocked }` – stan dostępu do strony (dla ekranu hasła) |
 | `POST` | `/api/projects/:id/unlock` | publiczny | odblokowanie strony hasłem (`{ "password": "…" }`), ustawia ciasteczko |
 | `GET` | `/api/projects/:id` | publiczny\* | szczegóły strony + komentarze |
-| `GET` | `/api/projects/:id/archive` | publiczny\* | archiwum ZIP z plikami strony (bez komentarzy) |
+| `GET` | `/api/projects/:id/archive` | publiczny\* | archiwum ZIP z plikami strony (bez komentarzy); nie dotyczy stron na żywo |
 | `GET` | `/api/projects/:id/comments` | publiczny\* | lista komentarzy |
 | `POST` | `/api/projects/:id/comments` | publiczny\* | dodanie komentarza |
 | `PATCH` | `/api/projects/:id/comments/:commentId` | publiczny\* | zmiana treści / statusu „rozwiązany” |
@@ -246,6 +321,10 @@ Pole `page` wskazuje plik HTML względem katalogu projektu i musi istnieć
 w przesłanym archiwum. Jest opcjonalne — bez niego komentarz trafia na stronę
 startową (tak zachowują się komentarze zapisane przed wprowadzeniem podstron).
 
+Dla stron na żywo `page` to ścieżka adresu (np. `/oferta/` albo `/?p=123`) –
+musi zaczynać się od `/` i wskazywać tę samą domenę (lub jej wariant z `www.`).
+Opcjonalne pole `postId` (dodatnia liczba całkowita) to ID wpisu WordPressa.
+
 Przykład komentarza do tekstu:
 
 ```json
@@ -278,8 +357,9 @@ komentarzy, przypisanie komentarzy do podstron (walidacja ścieżki i pliku),
 archiwum ZIP, podmianę plików bez zmiany linku (nowa treść, usunięcie starych
 plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
-plików i API, błędne/poprawne hasło, unieważnienie po zmianie) oraz
-zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
+plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
+(walidacja adresu, skrypt do wklejenia, klucze podstron, ID wpisu, odrzucanie
+obcych domen, brak ZIP-a i plików pod `/p/`) oraz zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
 
 ## Bezpieczeństwo i ograniczenia
@@ -300,6 +380,11 @@ zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json
 - Wgrane strony są serwowane z tego samego origin co aplikacja, więc skrypt
   wgranej strony ma dostęp do jej interfejsu. Nie wgrywaj niezaufanych archiwów.
   W środowisku produkcyjnym warto rozdzielić je na osobną domenę.
+- Strony na żywo działają na własnej domenie, więc nie mają dostępu do interfejsu
+  aplikacji. Skrypt wklejony na stronie wysyła wiadomości wyłącznie pod adres
+  Design Review i przyjmuje polecenia tylko od niego; widok recenzji przyjmuje
+  wiadomości tylko z domeny projektu (i jej wariantu `www.`). Hasło projektu
+  chroni widok recenzji i komentarze — sama strona WordPress pozostaje publiczna.
 - Limity: 50 MB na plik ZIP, 5000 plików, 300 MB po rozpakowaniu.
 - Dane trzymane są w plikach (`data/`, `sites/`) — kopię zapasową robi się
   przez skopiowanie tych katalogów. Backupy nie są tworzone automatycznie.

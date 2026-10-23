@@ -7,6 +7,10 @@
  * recenzji wyłącznie przez window.postMessage. Komentarze są zakotwiczone
  * albo jako pinezka (współrzędne w dokumencie), albo jako zaznaczony zakres
  * tekstu (ścieżka XPath + offsety znaków, z awaryjnym wyszukiwaniem tekstu).
+ *
+ * Ten sam plik obsługuje strony na żywo (np. WordPress), na których wkleja
+ * się go jednorazowo jako <script src=".../annotator.js" defer>. Poza ramką
+ * widoku recenzji nic nie robi – zwykli odwiedzający strony go nie widzą.
  */
 
 (function () {
@@ -19,21 +23,54 @@
   var win = window;
   var doc = document;
   var OWN_TAG = /^DRA-/;
+  var SCRIPT = doc.currentScript;
 
   /**
-   * Ścieżka pliku, w którym działa warstwa (np. "about.html"). Serwer wstawia
-   * ją w atrybucie data-page, więc indeksy katalogów też mają poprawną nazwę.
+   * Widok recenzji działa pod tym samym originem, z którego pobrano skrypt
+   * (dla stron z ZIP-a to po prostu ta sama domena). Wiadomości wysyłamy
+   * wyłącznie tam – gdy stronę osadzi w ramce ktoś inny, nic do niego nie
+   * trafi, a warstwa pozostanie nieaktywna.
    */
-  function pageFromDocument() {
-    var el = doc.currentScript;
-    var page = el && el.getAttribute ? el.getAttribute('data-page') : '';
+  var PARENT_ORIGIN = (function () {
+    try { return SCRIPT && SCRIPT.src ? new URL(SCRIPT.src, win.location.href).origin : ''; } catch (e) { return ''; }
+  })();
+  if (!PARENT_ORIGIN) return;
+
+  // Strony z ZIP-a serwer oznacza atrybutem data-page; jego brak = strona na żywo.
+  var LIVE = !(SCRIPT.hasAttribute && SCRIPT.hasAttribute('data-page'));
+  var ZIP_PREFIX = LIVE ? '' : ((/^\/p\/[^/]+\//.exec(win.location.pathname) || [''])[0]);
+
+  /**
+   * Strona, w której działa warstwa. Dla ZIP-a to ścieżka pliku (np.
+   * "about.html") z atrybutu data-page. Dla strony na żywo – ścieżka adresu,
+   * a przy odnośnikach ?p=123 / ?page_id=123 także ten parametr (tak samo
+   * liczy to serwer).
+   */
+  function currentPage() {
+    if (LIVE) {
+      var path = win.location.pathname || '/';
+      var params = ['page_id', 'p'];
+      for (var i = 0; i < params.length; i++) {
+        var m = new RegExp('[?&]' + params[i] + '=(\\d+)(?:&|$)').exec(win.location.search);
+        if (m) return path + '?' + params[i] + '=' + m[1];
+      }
+      return path;
+    }
+    var page = SCRIPT.getAttribute('data-page');
     if (page) return page;
-    var m = /^\/p\/[^/]+\/(.*)$/.exec(win.location.pathname);
-    if (!m) return '';
-    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+    var z = /^\/p\/[^/]+\/(.*)$/.exec(win.location.pathname);
+    if (!z) return '';
+    try { return decodeURIComponent(z[1]); } catch (e) { return z[1]; }
   }
 
-  var PAGE = pageFromDocument();
+  /** ID wpisu WordPressa z klas <body> (page-id-12 / postid-34), jeśli jest. */
+  function wpPostId() {
+    if (!LIVE || !doc.body) return null;
+    var m = /(?:^|\s)(?:page-id|postid)-(\d+)(?:\s|$)/.exec(String(doc.body.className || ''));
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  var connected = false;
 
   var state = {
     comments: [],
@@ -55,11 +92,7 @@
         if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
       }
     }
-    try {
-      win.parent.postMessage(msg, win.location.origin);
-    } catch (e) {
-      try { win.parent.postMessage(msg, '*'); } catch (e2) { /* nic */ }
-    }
+    try { win.parent.postMessage(msg, PARENT_ORIGIN); } catch (e) { /* nic */ }
   }
 
   /* --------------------------------------------------------------------- */
@@ -174,21 +207,20 @@
     return { overlay: overlay, pinLayer: pinLayer, hlLayer: hlLayer, tip: tip };
   }
 
-  var ui = mount();
-  var overlay = ui.overlay;
-  var pinLayer = ui.pinLayer;
-  var hlLayer = ui.hlLayer;
-  var tip = ui.tip;
+  // Nakładki powstają dopiero po połączeniu z widokiem recenzji (connect()).
+  var overlay = null;
+  var pinLayer = null;
+  var hlLayer = null;
+  var tip = null;
 
   // display ustawiamy z priorytetem, bo arkusz używa !important.
   function showTipEl() { tip.style.setProperty('display', 'flex', 'important'); }
-  function hideTipEl() { tip.style.setProperty('display', 'none', 'important'); }
-  function tipVisible() { return tip.style.display !== 'none'; }
-  hideTipEl();
+  function hideTipEl() { if (tip) tip.style.setProperty('display', 'none', 'important'); }
+  function tipVisible() { return !!tip && tip.style.display !== 'none'; }
 
   function isOurs(node) {
     while (node) {
-      if (node === overlay) return true;
+      if (overlay && node === overlay) return true;
       if (node.nodeType === 1 && node.tagName && OWN_TAG.test(node.tagName)) return true;
       node = node.parentNode;
     }
@@ -541,7 +573,7 @@
   }
 
   function render() {
-    if (!overlay.parentNode) return;
+    if (!overlay || !overlay.parentNode) return;
     clearLayers();
 
     var missing = [];
@@ -650,7 +682,7 @@
     clearSelectionTip();
     state.pending = { kind: 'text', anchor: anchor, range: range };
     render();
-    post('new-anchor', { page: PAGE, kind: 'text', anchor: anchor, preview: text });
+    post('new-anchor', { page: currentPage(), postId: wpPostId(), kind: 'text', anchor: anchor, preview: text });
   }
 
   /* --------------------------------------------------------------------- */
@@ -658,7 +690,7 @@
   /* --------------------------------------------------------------------- */
 
   doc.addEventListener('mouseup', function (e) {
-    if (state.mode !== 'select') return;
+    if (!connected || state.mode !== 'select') return;
     if (isOurs(e.target)) return;
     setTimeout(captureSelection, 0);
   }, true);
@@ -690,8 +722,54 @@
     } catch (err) { /* nic */ }
     state.pending = { kind: 'pin', anchor: anchor, range: null };
     render();
-    post('new-anchor', { page: PAGE, kind: 'pin', anchor: anchor, preview: '' });
+    post('new-anchor', { page: currentPage(), postId: wpPostId(), kind: 'pin', anchor: anchor, preview: '' });
   }, true);
+
+  /**
+   * Linki prowadzące poza recenzowaną stronę nie przełączają ramki – widok
+   * recenzji pokazuje wtedy komunikat z możliwością otwarcia linku w nowej
+   * karcie. Nasłuchujemy na końcu propagacji: jeśli strona sama obsłużyła
+   * kliknięcie (np. lightbox, menu), nie przeszkadzamy jej.
+   */
+  function closestLink(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    return el && el.closest ? el.closest('a[href], area[href]') : null;
+  }
+
+  function staysInReview(url) {
+    if (url.origin !== win.location.origin) return false;
+    return LIVE || (!!ZIP_PREFIX && url.pathname.indexOf(ZIP_PREFIX) === 0);
+  }
+
+  win.addEventListener('click', function (e) {
+    if (!connected || state.mode !== 'select') return;
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = closestLink(e.target);
+    if (!a || isOurs(a) || a.hasAttribute('download')) return;
+
+    var raw = a.getAttribute('href') || '';
+    if (!raw || raw.charAt(0) === '#') return;
+    var url;
+    try { url = new URL(raw, doc.baseURI || win.location.href); } catch (err) { return; }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return; // mailto:, tel:, javascript:
+
+    // Nowa karta lub nazwane okno – ramka zostaje na miejscu.
+    var target = (a.getAttribute('target') || '').toLowerCase();
+    var replacesView = target === '_top' || target === '_parent';
+    if (target && target !== '_self' && !replacesView) return;
+
+    if (staysInReview(url)) {
+      // _top/_parent podmieniłyby cały widok recenzji – otwieramy w ramce.
+      if (replacesView) {
+        e.preventDefault();
+        win.location.href = url.href;
+      }
+      return;
+    }
+    e.preventDefault();
+    post('blocked-link', { url: url.href });
+  }, false);
 
   function markerIdFrom(node) {
     var el = node;
@@ -704,24 +782,26 @@
     return null;
   }
 
-  overlay.addEventListener('click', function (e) {
-    if (tip === e.target || tip.contains(e.target)) {
+  function bindOverlay() {
+    overlay.addEventListener('click', function (e) {
+      if (tip === e.target || tip.contains(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+        commitSelection();
+        return;
+      }
+      var id = markerIdFrom(e.target);
+      if (!id) return;
       e.preventDefault();
       e.stopPropagation();
-      commitSelection();
-      return;
-    }
-    var id = markerIdFrom(e.target);
-    if (!id) return;
-    e.preventDefault();
-    e.stopPropagation();
-    state.selectedId = id;
-    render();
-    post('select-comment', { id: id });
-  }, true);
+      state.selectedId = id;
+      render();
+      post('select-comment', { id: id });
+    }, true);
 
-  tip.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); }, true);
-  tip.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); }, true);
+    tip.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); }, true);
+    tip.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); }, true);
+  }
 
   /* --------------------------------------------------------------------- */
   /*  Przerysowanie przy zmianach układu                                   */
@@ -782,6 +862,49 @@
     render();
   }, 700);
 
+  /**
+   * Na stronie na żywo treść potrafi zmienić się bez zmiany rozmiaru
+   * (slidery, doładowywane sekcje, animacje wejścia). Reagujemy na zmiany
+   * DOM-u – z pominięciem własnych nakładek i z ograniczeniem częstotliwości.
+   */
+  var mutationTimer = null;
+  function watchMutations() {
+    if (!win.MutationObserver) return;
+    new win.MutationObserver(function (records) {
+      if (mutationTimer || (!state.comments.length && !state.pending)) return;
+      for (var i = 0; i < records.length; i++) {
+        if (!isOurs(records[i].target)) {
+          mutationTimer = setTimeout(function () { mutationTimer = null; schedule(); }, 200);
+          return;
+        }
+      }
+    }).observe(doc.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+  }
+
+  /** Pierwsza poprawna wiadomość od widoku recenzji uruchamia warstwę. */
+  function connect() {
+    if (connected) return;
+    connected = true;
+    var ui = mount();
+    overlay = ui.overlay;
+    pinLayer = ui.pinLayer;
+    hlLayer = ui.hlLayer;
+    tip = ui.tip;
+    hideTipEl();
+    bindOverlay();
+    watchMutations();
+    schedule();
+  }
+
+  function readyInfo() {
+    return {
+      page: currentPage(),
+      postId: wpPostId(),
+      url: win.location.href,
+      height: doc.documentElement.scrollHeight,
+    };
+  }
+
   /* --------------------------------------------------------------------- */
   /*  Odbieranie poleceń z widoku recenzji                                 */
   /* --------------------------------------------------------------------- */
@@ -818,9 +941,22 @@
   }
 
   win.addEventListener('message', function (e) {
+    // Polecenia przyjmujemy wyłącznie od widoku recenzji, który osadził ramkę.
+    if (e.source !== win.parent || e.origin !== PARENT_ORIGIN) return;
     var d = e.data;
     if (!d || d.ns !== NS) return;
-    if (e.origin && e.origin !== win.location.origin) return;
+
+    if (d.type === 'init') {
+      connect();
+      post('ready', readyInfo());
+      return;
+    }
+    // Widok sprawdza po każdym wczytaniu ramki, czy warstwa nadal odpowiada.
+    if (d.type === 'probe') {
+      post(connected ? 'alive' : 'hello');
+      return;
+    }
+    if (!connected) return;
 
     switch (d.type) {
       case 'set-comments':
@@ -856,5 +992,11 @@
     }
   }, false);
 
-  post('ready', { page: PAGE, height: doc.documentElement.scrollHeight });
+  // Przywitanie: widok recenzji odpowie poleceniem 'init'. Skrypt wklejony
+  // w <head> bez defer czeka, aż powstanie <body>.
+  if (doc.readyState === 'loading') {
+    doc.addEventListener('DOMContentLoaded', function () { post('hello'); });
+  } else {
+    post('hello');
+  }
 })();
