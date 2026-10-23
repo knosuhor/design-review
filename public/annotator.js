@@ -228,11 +228,14 @@
   }
 
   /* --------------------------------------------------------------------- */
-  /*  Kotwiczenie tekstu                                                   */
+  /*  Ścieżki do węzłów                                                    */
   /* --------------------------------------------------------------------- */
 
-  function xpathOf(node) {
-    var root = doc.documentElement;
+  /**
+   * Kroki ścieżki od `root` do `node` w postaci "div[2]", "text()[1]".
+   * Zwraca [] gdy node === root, null gdy node nie leży wewnątrz root.
+   */
+  function stepsFrom(root, node) {
     if (!node || node.nodeType === 9) return null;
     var parts = [];
     var cur = node;
@@ -256,35 +259,18 @@
       }
       cur = cur.parentNode;
     }
-    if (cur !== root) return null;
-    return parts.length ? '/' + parts.join('/') : null;
+    return cur === root ? parts : null;
   }
 
-  // Cache odnalezionych elementów – XPath jest przeliczany przy każdym
-  // przerysowaniu warstwy (m.in. przy przewijaniu i zmianie rozmiaru okna).
-  var elementCache = {};
-
-  function elementForXPath(path) {
-    var cached = elementCache[path];
-    if (cached && cached.isConnected) return cached;
-    var el = resolveXPath(path);
-    if (el) elementCache[path] = el;
-    return el;
+  function xpathOf(node) {
+    var steps = stepsFrom(doc.documentElement, node);
+    return steps && steps.length ? '/' + steps.join('/') : null;
   }
 
-  function nodeLength(node) {
-    if (!node) return 0;
-    if (node.nodeType === 3) return node.nodeValue.length;
-    if (node.nodeType === 1) return node.childNodes.length;
-    return 0;
-  }
-
-  function resolveXPath(path) {
-    if (!path || path.charAt(0) !== '/') return null;
-    var steps = path.slice(1).split('/');
-    var node = doc.documentElement;
+  function resolveSteps(root, steps) {
+    var node = root;
     for (var i = 0; i < steps.length; i++) {
-      var m = /^([a-zA-Z0-9_:.-]+)\[(\d+)\]$/.exec(steps[i]);
+      var m = /^([a-zA-Z0-9_:.-]+|text\(\))\[(\d+)\]$/.exec(steps[i]);
       if (!m) return null;
       var name = m[1];
       var want = parseInt(m[2], 10);
@@ -305,6 +291,111 @@
     }
     return node;
   }
+
+  function resolveXPath(path) {
+    if (!path || path.charAt(0) !== '/') return null;
+    return resolveSteps(doc.documentElement, path.slice(1).split('/'));
+  }
+
+  function nodeLength(node) {
+    if (!node) return 0;
+    if (node.nodeType === 3) return node.nodeValue.length;
+    if (node.nodeType === 1) return node.childNodes.length;
+    return 0;
+  }
+
+  /* --------------------------------------------------------------------- */
+  /*  Kotwice Elementora (data-id)                                         */
+  /* --------------------------------------------------------------------- */
+
+  /*
+   * Elementor nadaje każdemu elementowi stały data-id, który przetrwa
+   * dodanie sekcji wyżej czy przesunięcie bloku – w odróżnieniu od XPath.
+   * Kotwica zapisuje: data-id najbliższego elementu, numer jego wystąpienia
+   * (ten sam data-id może się powtórzyć: Loop Grid, globalne widżety,
+   * wielokrotnie wstawiony szablon) oraz ścieżkę od niego do celu.
+   * Kopie tworzone przez skrypty strony (slajdy karuzeli w pętli, wypełniacz
+   * przyklejanego nagłówka) pomijamy. Pełny XPath zostaje jako zapas.
+   */
+  var CLONE_SELECTOR = '.swiper-slide-duplicate, .slick-cloned, .elementor-sticky__spacer';
+  var EID_RE = /^[A-Za-z0-9]{1,32}$/;
+
+  function isElementorElement(el) {
+    if (!el || el.nodeType !== 1 || !el.hasAttribute('data-id')) return false;
+    // Elementor (klasyczny i Atomic v4) – z data-id korzystają też inne skrypty.
+    return el.hasAttribute('data-element_type') || el.hasAttribute('data-e-type')
+      || (el.classList && el.classList.contains('elementor-element'));
+  }
+
+  function isClone(el) {
+    return !!(el && el.closest && el.closest(CLONE_SELECTOR));
+  }
+
+  /** Elementy o danym data-id w kolejności dokumentu, bez kopii. */
+  function elementorCandidates(id) {
+    var out = [];
+    var list = doc.querySelectorAll('[data-id="' + id + '"]');
+    for (var i = 0; i < list.length; i++) {
+      if (isElementorElement(list[i]) && !isClone(list[i])) out.push(list[i]);
+    }
+    return out;
+  }
+
+  function elementorAnchor(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    while (el && el.nodeType === 1 && !isElementorElement(el)) el = el.parentNode;
+    if (!el || el.nodeType !== 1 || isClone(el)) return null;
+    var id = el.getAttribute('data-id');
+    if (!EID_RE.test(id)) return null;
+    var n = elementorCandidates(id).indexOf(el) + 1;
+    var steps = stepsFrom(el, node);
+    if (!n || !steps) return null;
+    return { id: id, n: n, rel: steps.join('/') };
+  }
+
+  /**
+   * Węzeł wskazywany przez kotwicę: najpierw data-id (gdy się powtarza –
+   * ten egzemplarz, który zawiera węzeł z XPath, a w drugiej kolejności
+   * zapisany numer wystąpienia), potem sam XPath.
+   */
+  function resolveNode(eid, xpath) {
+    if (eid && typeof eid.id === 'string' && EID_RE.test(eid.id)) {
+      var candidates = elementorCandidates(eid.id);
+      var base = null;
+      if (candidates.length === 1) {
+        base = candidates[0];
+      } else if (candidates.length > 1) {
+        var byPath = xpath ? resolveXPath(xpath) : null;
+        for (var i = 0; byPath && i < candidates.length; i++) {
+          if (candidates[i] === byPath || candidates[i].contains(byPath)) { base = candidates[i]; break; }
+        }
+        if (!base && eid.n >= 1 && eid.n <= candidates.length) base = candidates[eid.n - 1];
+      }
+      if (base) {
+        var node = eid.rel ? resolveSteps(base, String(eid.rel).split('/')) : base;
+        if (node) return node;
+      }
+    }
+    return xpath ? resolveXPath(xpath) : null;
+  }
+
+  // Cache odnalezionych elementów pinezek – kotwica jest przeliczana przy
+  // każdym przerysowaniu warstwy (m.in. przy przewijaniu i zmianie rozmiaru).
+  var elementCache = {};
+
+  function elementForTarget(t) {
+    var key = t.xpath + (t.eid ? '|' + t.eid.id + '|' + t.eid.n + '|' + t.eid.rel : '');
+    var cached = elementCache[key];
+    if (cached && cached.isConnected && !isClone(cached)) return cached;
+    var el = resolveNode(t.eid, t.xpath);
+    if (el && el.nodeType !== 1) el = null;
+    if (el) elementCache[key] = el;
+    return el;
+  }
+
+  /* --------------------------------------------------------------------- */
+  /*  Kotwiczenie tekstu                                                   */
+  /* --------------------------------------------------------------------- */
 
   function normalizeWithMap(str) {
     var out = '';
@@ -365,19 +456,30 @@
     return null;
   }
 
+  /** Zakres między węzłami – tylko jeśli nadal obejmuje zapisany tekst. */
+  function rangeBetween(s, e, anchor) {
+    if (!s || !e) return null;
+    try {
+      var range = doc.createRange();
+      range.setStart(s, Math.min(anchor.startOffset, nodeLength(s)));
+      range.setEnd(e, Math.min(anchor.endOffset, nodeLength(e)));
+      var text = range.toString().replace(/\s+/g, ' ').trim();
+      if (!text || (anchor.text && text.slice(0, 500) !== anchor.text)) return null;
+      return range;
+    } catch (err) {
+      return null;
+    }
+  }
+
   function buildRange(anchor) {
     if (!anchor) return null;
-    try {
-      var s = resolveXPath(anchor.startXPath);
-      var e = anchor.endXPath === anchor.startXPath ? s : resolveXPath(anchor.endXPath);
-      if (s && e) {
-        var range = doc.createRange();
-        range.setStart(s, Math.min(anchor.startOffset, nodeLength(s)));
-        range.setEnd(e, Math.min(anchor.endOffset, nodeLength(e)));
-        if (range.toString().trim()) return range;
-      }
-    } catch (err) { /* fallback poniżej */ }
-    return findByText(anchor.text);
+    var range = null;
+    if (anchor.startEid || anchor.endEid) {
+      range = rangeBetween(resolveNode(anchor.startEid, anchor.startXPath),
+        resolveNode(anchor.endEid, anchor.endXPath), anchor);
+    }
+    if (!range) range = rangeBetween(resolveXPath(anchor.startXPath), resolveXPath(anchor.endXPath), anchor);
+    return range || findByText(anchor.text);
   }
 
   function rectsFor(anchor) {
@@ -399,13 +501,18 @@
   }
 
   function serializeRange(range) {
-    return {
+    var anchor = {
       startXPath: xpathOf(range.startContainer),
       startOffset: range.startOffset,
       endXPath: xpathOf(range.endContainer),
       endOffset: range.endOffset,
       text: range.toString().replace(/\s+/g, ' ').trim().slice(0, 500),
     };
+    var startEid = elementorAnchor(range.startContainer);
+    var endEid = elementorAnchor(range.endContainer);
+    if (startEid) anchor.startEid = startEid;
+    if (endEid) anchor.endEid = endEid;
+    return anchor;
   }
 
   /* --------------------------------------------------------------------- */
@@ -430,11 +537,14 @@
         if (r.width > 1 && r.height > 1) {
           var path = xpathOf(el);
           if (path) {
-            return {
+            var target = {
               xpath: path,
               fx: round5(Math.min(1, Math.max(0, (clientX - r.left) / r.width))),
               fy: round5(Math.min(1, Math.max(0, (clientY - r.top) / r.height))),
             };
+            var eid = elementorAnchor(el);
+            if (eid) target.eid = eid;
+            return target;
           }
         }
       }
@@ -451,7 +561,7 @@
   function pinViewportPoint(anchor) {
     var t = anchor && anchor.target;
     if (t && t.xpath) {
-      var el = elementForXPath(t.xpath);
+      var el = elementForTarget(t);
       if (el && el.getBoundingClientRect) {
         var r = el.getBoundingClientRect();
         if (r.width > 0 || r.height > 0) {
@@ -487,7 +597,7 @@
     if (!c || c.type !== 'pin' || !c.anchor || state.hiddenIds[c.id]) return;
     var t = c.anchor.target;
     if (!t || !t.xpath) return;
-    var el = elementForXPath(t.xpath);
+    var el = elementForTarget(t);
     if (!el || !el.getBoundingClientRect) return;
     var r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;

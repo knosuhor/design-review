@@ -508,6 +508,42 @@ async function main() {
   check('nieprawidłowe ID wpisu jest pomijane', badPost.comment && !('postId' in badPost.comment),
     JSON.stringify(badPost));
 
+  const eidPin = await (await liveComment('/oferta/', {
+    anchor: { x: 1, y: 2, target: { xpath: '/body[1]/div[3]/img[1]', fx: 0.5, fy: 0.5,
+      eid: { id: '10fb84d8', n: 2, rel: 'div[1]/img[1]' } } },
+  })).json();
+  check('pinezka zapisuje kotwicę Elementora (data-id, wystąpienie, ścieżka)',
+    eidPin.comment && JSON.stringify(eidPin.comment.anchor.target.eid) === '{"id":"10fb84d8","n":2,"rel":"div[1]/img[1]"}',
+    JSON.stringify(eidPin.comment && eidPin.comment.anchor));
+
+  const badEids = [
+    { id: 'a"]b', n: 1, rel: '' },
+    { id: 'abc', n: 0, rel: '' },
+    { id: 'abc', n: 1, rel: '../div[1]' },
+  ];
+  let badDropped = true;
+  for (const eid of badEids) {
+    const r = await (await liveComment('/oferta/', {
+      anchor: { x: 1, y: 2, target: { xpath: '/body[1]', fx: 0, fy: 0, eid } },
+    })).json();
+    if (!r.comment || r.comment.anchor.target.eid || r.comment.anchor.target.xpath !== '/body[1]') badDropped = false;
+  }
+  check('nieprawidłowa kotwica Elementora jest pomijana (XPath zostaje)', badDropped);
+
+  const eidText = await (await liveComment('/oferta/', {
+    type: 'text',
+    anchor: {
+      startXPath: '/body[1]/p[1]/text()[1]', startOffset: 0,
+      endXPath: '/body[1]/p[1]/text()[1]', endOffset: 4, text: 'Acme',
+      startEid: { id: 'ab12cd', n: 1, rel: 'p[1]/text()[1]' },
+      endEid: { id: 'ab12cd', n: 1, rel: 'p[1]/text()[1]' },
+    },
+  })).json();
+  check('zaznaczenie tekstu zapisuje kotwice Elementora',
+    eidText.comment && eidText.comment.anchor.startEid && eidText.comment.anchor.startEid.rel === 'p[1]/text()[1]'
+      && eidText.comment.anchor.endEid && eidText.comment.anchor.endEid.id === 'ab12cd',
+    JSON.stringify(eidText));
+
   const liveArchive = await fetch(`${BASE}/api/projects/${live.id}/archive`);
   check('strona na żywo nie ma archiwum ZIP (400)', liveArchive.status === 400, String(liveArchive.status));
 

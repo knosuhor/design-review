@@ -494,6 +494,24 @@ app.delete('/api/projects/:id', auth.requireAuthApi, async (req, res) => {
  * kliknięcia jako ułamek jego szerokości i wysokości), a dodatkowo zapisujemy
  * bezwzględne współrzędne dokumentu jako rozwiązanie zapasowe.
  */
+const PATH_STEPS_RE = /^(?:[a-z0-9_:.-]+|text\(\))\[\d+\](?:\/(?:[a-z0-9_:.-]+|text\(\))\[\d+\])*$/i;
+
+/**
+ * Kotwica Elementora: data-id elementu, numer jego wystąpienia na stronie
+ * (ten sam data-id może się powtórzyć) i ścieżka od niego do celu.
+ * Nieprawidłowa kotwica jest po prostu pomijana – zostaje XPath.
+ */
+function parseElementorAnchor(eid) {
+  if (!eid || typeof eid !== 'object') return null;
+  const id = String(eid.id == null ? '' : eid.id);
+  const n = Number(eid.n);
+  const rel = String(eid.rel == null ? '' : eid.rel);
+  if (!/^[A-Za-z0-9]{1,32}$/.test(id)) return null;
+  if (!Number.isInteger(n) || n < 1 || n > 10000) return null;
+  if (rel.length > 1000 || (rel && !PATH_STEPS_RE.test(rel))) return null;
+  return { id, n, rel };
+}
+
 function parsePinTarget(target) {
   if (!target || typeof target !== 'object') return null;
   const xpath = clampStr(target.xpath, 2000);
@@ -502,7 +520,10 @@ function parsePinTarget(target) {
   const fy = Number(target.fy);
   if (!Number.isFinite(fx) || !Number.isFinite(fy)) return null;
   const unit = (v) => Math.round(Math.min(1, Math.max(0, v)) * 100000) / 100000;
-  return { xpath, fx: unit(fx), fy: unit(fy) };
+  const parsed = { xpath, fx: unit(fx), fy: unit(fy) };
+  const eid = parseElementorAnchor(target.eid);
+  if (eid) parsed.eid = eid;
+  return parsed;
 }
 
 function parsePinAnchor(a) {
@@ -530,13 +551,18 @@ function parseTextAnchor(a) {
   if (!startXPath || !endXPath) return null;
   if (!Number.isInteger(startOffset) || !Number.isInteger(endOffset)) return null;
   if (startOffset < 0 || endOffset < 0) return null;
-  return {
+  const anchor = {
     startXPath,
     endXPath,
     startOffset,
     endOffset,
     text: clampStr(a.text, 600),
   };
+  const startEid = parseElementorAnchor(a.startEid);
+  const endEid = parseElementorAnchor(a.endEid);
+  if (startEid) anchor.startEid = startEid;
+  if (endEid) anchor.endEid = endEid;
+  return anchor;
 }
 
 /**

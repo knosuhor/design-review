@@ -235,10 +235,31 @@ automatycznie przełącza też listę i numerację pinezek.
   bezwzględne współrzędne dokumentu, używane gdy elementu nie da się już
   odnaleźć (np. po zmianie struktury strony).
 - **Tekst** – ścieżka XPath początku i końca zakresu + offsety znaków (+ treść
-  zaznaczenia jako zapas). Przy odczycie zakres jest odtwarzany; jeśli strona się
-  zmieniła, używane jest awaryjne wyszukiwanie tekstu. Gdy i to zawiedzie,
-  komentarz nadal jest widoczny na liście z ostrzeżeniem
-  „Nie można odnaleźć tego miejsca na stronie”.
+  zaznaczenia jako zapas). Przy odczycie zakres jest odtwarzany i używany tylko
+  wtedy, gdy nadal obejmuje zapisany tekst; jeśli strona się zmieniła, używane
+  jest awaryjne wyszukiwanie tekstu. Gdy i to zawiedzie, komentarz nadal jest
+  widoczny na liście z ostrzeżeniem „Nie można odnaleźć tego miejsca na stronie”.
+
+### Strony zbudowane w Elementorze
+
+XPath rozjeżdża się, gdy ktoś doda sekcję wyżej albo przesunie blok. Dlatego
+na stronach z Elementorem (klasycznym i Atomic v4) kotwica zapisuje dodatkowo
+**`data-id` najbliższego elementu Elementora**, **numer jego wystąpienia** na
+stronie i **ścieżkę od niego do celu** (`eid: { id, n, rel }` – w pinezce
+w `target.eid`, w zaznaczeniu tekstu w `startEid` / `endEid`). Przy odczycie:
+
+1. jeden element z tym `data-id` → komentarz trafia do niego,
+2. kilka elementów (Loop Grid, globalne widżety, kilkakrotnie wstawiony
+   szablon) → ten egzemplarz, który zawiera miejsce wskazane przez XPath,
+   a gdy żaden – egzemplarz o zapisanym numerze wystąpienia,
+3. brak elementu albo ścieżki → XPath, a potem współrzędne / wyszukiwanie tekstu.
+
+Kopie tworzone przez skrypty strony – powielone slajdy karuzel w pętli
+(`.swiper-slide-duplicate`, `.slick-cloned`) i wypełniacz przyklejanego nagłówka
+(`.elementor-sticky__spacer`) – są pomijane. Uwzględniane są tylko elementy
+z `data-id` oznaczone przez Elementor (`data-element_type`, `data-e-type` albo
+klasa `elementor-element`). Komentarze zapisane wcześniej, bez `eid`, działają
+jak dotąd.
 
 ## Struktura projektu
 
@@ -359,7 +380,7 @@ plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
 (walidacja adresu, skrypt do wklejenia, klucze podstron, ID wpisu, odrzucanie
-obcych domen, brak ZIP-a i plików pod `/p/`) oraz zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
+obcych domen, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
 
 ## Bezpieczeństwo i ograniczenia
