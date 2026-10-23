@@ -94,7 +94,16 @@ function projectDto(project) {
 
 /** Adres, pod którym recenzowana strona pobiera skrypt warstwy adnotacji. */
 function publicOrigin(req) {
-  return PUBLIC_URL || req.protocol + '://' + req.get('host');
+  if (PUBLIC_URL) return PUBLIC_URL;
+  // Za odwrotnym proxy (Cloudflare, tunel, Render) Express widzi `http`, więc
+  // bierzemy protokół przekazany w nagłówku – tak samo jak przy ciasteczkach
+  // (lib/auth.js). Bez tego strona na HTTPS nie wczytałaby skryptu (mixed content).
+  const forwarded = String((req.headers && req.headers['x-forwarded-proto']) || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  const proto = forwarded === 'https' || forwarded === 'http' ? forwarded : req.protocol;
+  return proto + '://' + req.get('host');
 }
 
 function annotatorSnippet(req) {
@@ -584,7 +593,12 @@ async function resolveCommentPage(project, raw) {
       return null;
     }
     if (!siteOrigins(project.origin).includes(url.origin)) return null;
-    return pageKey(url);
+    const page = pageKey(url);
+    // Adres mógł się znormalizować do postaci zaczynającej się od "//" (np.
+    // "/a/..//evil.com" → "//evil.com"). Taki klucz wskazywałby inny host,
+    // więc widok recenzji wyprowadziłby w ramce poza recenzowaną witrynę.
+    if (page.charAt(0) !== '/' || page.startsWith('//')) return null;
+    return page;
   }
 
   const rel = String(raw).split('#')[0].split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '').trim();

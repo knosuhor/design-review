@@ -166,7 +166,18 @@ function commentNumber(comment) {
 }
 
 function pageUrl(page) {
-  if (isLive()) return new URL(page, project.origin).href;
+  if (isLive()) {
+    // Zabezpieczenie przed kluczem wskazującym inny host (np. "//evil.com"):
+    // ramka może wczytać wyłącznie recenzowaną witrynę.
+    const allowed = project.origins || [project.origin];
+    try {
+      const url = new URL(page, project.origin);
+      if (!allowed.includes(url.origin)) return project.entryUrl;
+      return url.href;
+    } catch {
+      return project.entryUrl;
+    }
+  }
   return '/p/' + encodeURIComponent(projectId) + '/'
     + page.split('/').map(encodeURIComponent).join('/');
 }
@@ -564,7 +575,8 @@ function showLost() {
     lostTitle.textContent = 'Utracono połączenie z recenzowaną stroną';
     lostDesc.textContent = 'Podgląd przeszedł na stronę, która nie jest objęta recenzją '
       + '(np. inną domenę, plik albo podstronę bez skryptu Design Review). Komentowanie jest wstrzymane.';
-    lostBack.textContent = 'Wróć do: ' + labelForUrl(lastGoodUrl);
+    lostBack.textContent = 'Powrót';
+    lostBack.title = 'Wróć do: ' + labelForUrl(lastGoodUrl);
     lostBack.dataset.url = lastGoodUrl;
     lostOpen.hidden = true;
   } else {
@@ -577,6 +589,7 @@ function showLost() {
         + 'wtedy potrzebny będzie plugin.'
       : 'Nie udało się wczytać podglądu strony.';
     lostBack.textContent = 'Spróbuj ponownie';
+    lostBack.title = entry ? 'Wróć do: ' + labelForUrl(entry) : '';
     lostBack.dataset.url = entry;
     lostOpen.href = entry;
     lostOpen.hidden = !entry;

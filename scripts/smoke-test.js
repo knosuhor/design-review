@@ -504,9 +504,22 @@ async function main() {
 
   check('odrzucona strona z innej domeny', (await liveComment('//evil.com/x')).status === 400);
   check('odrzucony pełny adres zamiast ścieżki', (await liveComment('https://evil.com/x')).status === 400);
+  check('odrzucona ścieżka normalizująca się do obcego hosta', (await liveComment('/a/..//evil.com')).status === 400);
+  check('odrzucona zakodowana ścieżka do obcego hosta', (await liveComment('/%2e%2e//evil.com')).status === 400);
+  check('odrzucona ścieżka z ukośnikiem odwrotnym do obcego hosta',
+    (await liveComment('/' + String.fromCharCode(92) + 'evil.com')).status === 400);
+  const normalized = await (await liveComment('/oferta/../kontakt/')).json();
+  check('poprawna ścieżka z ".." jest normalizowana w obrębie witryny',
+    normalized.comment && normalized.comment.page === '/kontakt/', JSON.stringify(normalized));
   const badPost = await (await liveComment('/kontakt/', { postId: 'abc' })).json();
   check('nieprawidłowe ID wpisu jest pomijane', badPost.comment && !('postId' in badPost.comment),
     JSON.stringify(badPost));
+
+  const proxied = await (await fetch(`${BASE}/api/projects`, {
+    headers: { 'X-Forwarded-Proto': 'https' },
+  })).json();
+  check('protokół skryptu z X-Forwarded-Proto (proxy HTTPS)',
+    String(proxied.snippet || '').startsWith('<script src="https://'), proxied.snippet);
 
   const eidPin = await (await liveComment('/oferta/', {
     anchor: { x: 1, y: 2, target: { xpath: '/body[1]/div[3]/img[1]', fx: 0.5, fy: 0.5,

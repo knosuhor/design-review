@@ -48,7 +48,8 @@ set PORT=8080 && npm start
 
 Zmienna `PUBLIC_URL` to publiczny adres aplikacji (np. za odwrotnym proxy z HTTPS).
 Trafia do skryptu, który wkleja się na stronach na żywo — bez niej używany jest adres,
-pod którym otwarto panel:
+pod którym otwarto panel (z protokołem z nagłówka `X-Forwarded-Proto`, jeśli proxy
+go przekazuje):
 
 ```bash
 set PUBLIC_URL=https://review.twojadomena.pl && npm start
@@ -133,6 +134,9 @@ Jak to działa:
   podstronie także po zmianie jej adresu.
 - Dozwolone są adres strony i jego wariant z `www.` albo bez niego
   (WordPress często między nimi przekierowuje).
+- Klucz podstrony zawsze wskazuje recenzowaną witrynę — adresy, które po
+  normalizacji próbują wskazać inny host (np. `//evil.com`), są odrzucane,
+  więc komentarz nie wyprowadzi podglądu poza stronę.
 - Treść strony na żywo się zmienia (slidery, doładowywane sekcje), więc warstwa
   adnotacji przelicza położenie pinezek także po zmianach w DOM-ie.
 
@@ -147,7 +151,8 @@ Nawigacja w podglądzie:
   formularz, plik, podstrona bez skryptu), widok to wykryje (warstwa adnotacji
   nie odpowie w ciągu ~3,5 s po wczytaniu) i przykryje podgląd komunikatem
   **„Utracono połączenie z recenzowaną stroną”** z przyciskiem
-  **„Wróć do: /ostatnia-strona/”**. Komentowanie jest wtedy wstrzymane.
+  **„Powrót”** (pełny adres ostatniej poprawnej strony jest w podpowiedzi
+  przycisku). Komentowanie jest wtedy wstrzymane.
 - Jeśli strona nie odpowie **już przy pierwszym wczytaniu**, komunikat
   **„Strona nie odpowiada”** podpowiada, że brakuje skryptu albo strona blokuje
   wyświetlanie w ramce.
