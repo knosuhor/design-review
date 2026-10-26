@@ -2,6 +2,7 @@
 
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -17,6 +18,34 @@ const MAX_UPLOAD = 50 * 1024 * 1024; // 50 MB
 // Publiczny adres aplikacji (np. za odwrotnym proxy z HTTPS). Trafia do
 // skryptu, który wkleja się na recenzowanej stronie WordPress.
 const PUBLIC_URL = String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+
+/**
+ * Warstwa adnotacji (`public/annotator.js`) i jej wersja – skrót treści.
+ * Wersja trafia do adresu skryptu na stronach z ZIP-a (`/annotator.js?v=…`),
+ * bo serwer wstawia go przy każdym wczytaniu strony. Skrypt wklejany na strony
+ * na żywo wersji NIE ma: wkleja się go raz, więc stary numer zostałby w kodzie
+ * strony po aktualizacji. Plik czytamy ponownie, gdy zmieni się na dysku
+ * (np. przy `npm run dev`, który nie śledzi plików z public/).
+ */
+const ANNOTATOR_FILE = path.join(store.PUBLIC_DIR, 'annotator.js');
+const annotatorCache = { mtimeMs: -1, body: null, version: 'dev' };
+
+function annotator() {
+  let stat = null;
+  try { stat = fs.statSync(ANNOTATOR_FILE); } catch { /* brak pliku */ }
+  if (!stat) return { body: null, version: 'dev' };
+  if (stat.mtimeMs !== annotatorCache.mtimeMs) {
+    try {
+      const body = fs.readFileSync(ANNOTATOR_FILE);
+      annotatorCache.body = body;
+      annotatorCache.version = crypto.createHash('sha1').update(body).digest('hex').slice(0, 12);
+      annotatorCache.mtimeMs = stat.mtimeMs;
+    } catch {
+      return { body: null, version: 'dev' };
+    }
+  }
+  return annotatorCache;
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -94,10 +123,20 @@ function projectDto(project) {
 
 /** Adres, pod którym recenzowana strona pobiera skrypt warstwy adnotacji. */
 function publicOrigin(req) {
-  return PUBLIC_URL || req.protocol + '://' + req.get('host');
+  if (PUBLIC_URL) return PUBLIC_URL;
+  // Za odwrotnym proxy (Cloudflare, tunel, Render) Express widzi `http`, więc
+  // bierzemy protokół przekazany w nagłówku – tak samo jak przy ciasteczkach
+  // (lib/auth.js). Bez tego strona na HTTPS nie wczytałaby skryptu (mixed content).
+  const forwarded = String((req.headers && req.headers['x-forwarded-proto']) || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  const proto = forwarded === 'https' || forwarded === 'http' ? forwarded : req.protocol;
+  return proto + '://' + req.get('host');
 }
 
 function annotatorSnippet(req) {
+  // Bez wersji w adresie – zob. komentarz przy annotator().
   return '<script src="' + publicOrigin(req) + '/annotator.js" defer></script>';
 }
 
@@ -584,7 +623,12 @@ async function resolveCommentPage(project, raw) {
       return null;
     }
     if (!siteOrigins(project.origin).includes(url.origin)) return null;
-    return pageKey(url);
+    const page = pageKey(url);
+    // Adres mógł się znormalizować do postaci zaczynającej się od "//" (np.
+    // "/a/..//evil.com" → "//evil.com"). Taki klucz wskazywałby inny host,
+    // więc widok recenzji wyprowadziłby w ramce poza recenzowaną witrynę.
+    if (page.charAt(0) !== '/' || page.startsWith('//')) return null;
+    return page;
   }
 
   const rel = String(raw).split('#')[0].split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '').trim();
@@ -726,7 +770,7 @@ function isUtf8(buffer) {
  */
 function injectAnnotator(html, page) {
   const clean = html.replace(CSP_META_RE, '');
-  const tag = '<script src="/annotator.js" data-page="' + escapeAttr(page) + '"></script>';
+  const tag = '<script src="/annotator.js?v=' + annotator().version + '" data-page="' + escapeAttr(page) + '"></script>';
   if (/<\/body\s*>/i.test(clean)) return clean.replace(/<\/body\s*>/i, tag + '\n</body>');
   if (/<\/html\s*>/i.test(clean)) return clean.replace(/<\/html\s*>/i, tag + '\n</html>');
   return clean + '\n' + tag;
@@ -822,6 +866,21 @@ app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (homePath(req)) return auth.requireAuthPage(req, res, next);
   next();
+});
+
+/**
+ * Warstwa adnotacji. Adres z aktualną wersją (`?v=<hash>`, tylko strony
+ * z ZIP-a) można trzymać w cache „na zawsze”. Każdy inny – w tym skrypt
+ * wklejony na strony na żywo – wymaga sprawdzenia przy każdym użyciu
+ * (`no-cache`); dzięki ETag niezmieniony plik kończy się odpowiedzią 304.
+ */
+app.get('/annotator.js', (req, res) => {
+  const { body, version } = annotator();
+  if (!body) return res.status(404).type('js').send('// brak pliku annotator.js');
+  const versioned = version !== 'dev' && String(req.query.v || '') === version;
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', versioned ? 'public, max-age=31536000, immutable' : 'no-cache');
+  res.send(body);
 });
 
 app.use(express.static(store.PUBLIC_DIR, { extensions: ['html'], index: 'index.html' }));

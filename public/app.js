@@ -186,11 +186,30 @@ function renderProjects(projects) {
       site.textContent = project.url;
       meta.append(date, dot, site);
     } else {
-      meta.innerHTML =
-        `<span${project.updatedAt ? ` title="Wgrano: ${formatDate(project.createdAt)}"` : ''}>${dateText}</span>` +
-        `<span class="dot">·</span><span>${formatBytes(project.size)}</span>` +
-        `<span class="dot">·</span><span>${project.files} plik(ów)</span>` +
-        `<span class="dot">·</span><span><code>${project.entry}</code></span>`;
+      // Elementy budujemy w DOM (nie innerHTML) – nazwa pliku startowego
+      // pochodzi z archiwum ZIP i nie może trafić na stronę jako HTML.
+      const addMeta = (text, tag) => {
+        const el = document.createElement(tag || 'span');
+        el.textContent = text;
+        meta.appendChild(el);
+      };
+      const addDot = () => {
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.textContent = '·';
+        meta.appendChild(dot);
+      };
+
+      const date = document.createElement('span');
+      date.textContent = dateText;
+      if (project.updatedAt) date.title = `Wgrano: ${formatDate(project.createdAt)}`;
+      meta.appendChild(date);
+      addDot();
+      addMeta(formatBytes(project.size));
+      addDot();
+      addMeta(`${project.files} plik(ów)`);
+      addDot();
+      addMeta(project.entry, 'code');
     }
 
     const linkRow = document.createElement('div');

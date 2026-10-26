@@ -48,7 +48,8 @@ set PORT=8080 && npm start
 
 Zmienna `PUBLIC_URL` to publiczny adres aplikacji (np. za odwrotnym proxy z HTTPS).
 Trafia do skryptu, który wkleja się na stronach na żywo — bez niej używany jest adres,
-pod którym otwarto panel:
+pod którym otwarto panel (z protokołem z nagłówka `X-Forwarded-Proto`, jeśli proxy
+go przekazuje):
 
 ```bash
 set PUBLIC_URL=https://review.twojadomena.pl && npm start
@@ -127,12 +128,22 @@ Jak to działa:
   się **tylko wtedy, gdy ramką jest widok Design Review** (rozpoznaje go po
   adresie, z którego sam został pobrany). Zwykli odwiedzający, a także obce
   strony osadzające witrynę w ramce, nie widzą żadnej zmiany i nic nie dostają.
+- Skrypt do wklejenia **nie zawiera wersji w adresie** i jest wysyłany
+  z `Cache-Control: no-cache`: przeglądarka przy każdym użyciu krótko sprawdza,
+  czy plik się zmienił (niezmieniony kończy się odpowiedzią 304). Dzięki temu
+  po aktualizacji aplikacji recenzenci od razu dostają nową warstwę adnotacji,
+  a skryptu na stronie nie trzeba wklejać ponownie. Wersja (`/annotator.js?v=…`,
+  cache'owana „na zawsze”) jest tylko na stronach z ZIP-a, gdzie serwer wstawia
+  skrypt przy każdym wczytaniu strony.
 - Komentarz zapamiętuje ścieżkę podstrony (np. `/oferta/`; przy odnośnikach
   `?p=123` / `?page_id=123` także ten parametr) oraz **ID wpisu WordPressa**
   (z klas `page-id-…` / `postid-…` na `<body>`) – dzięki temu zostaje na swojej
   podstronie także po zmianie jej adresu.
 - Dozwolone są adres strony i jego wariant z `www.` albo bez niego
   (WordPress często między nimi przekierowuje).
+- Klucz podstrony zawsze wskazuje recenzowaną witrynę — adresy, które po
+  normalizacji próbują wskazać inny host (np. `//evil.com`), są odrzucane,
+  więc komentarz nie wyprowadzi podglądu poza stronę.
 - Treść strony na żywo się zmienia (slidery, doładowywane sekcje), więc warstwa
   adnotacji przelicza położenie pinezek także po zmianach w DOM-ie.
 
@@ -147,7 +158,8 @@ Nawigacja w podglądzie:
   formularz, plik, podstrona bez skryptu), widok to wykryje (warstwa adnotacji
   nie odpowie w ciągu ~3,5 s po wczytaniu) i przykryje podgląd komunikatem
   **„Utracono połączenie z recenzowaną stroną”** z przyciskiem
-  **„Wróć do: /ostatnia-strona/”**. Komentowanie jest wtedy wstrzymane.
+  **„Powrót”** (pełny adres ostatniej poprawnej strony jest w podpowiedzi
+  przycisku). Komentowanie jest wtedy wstrzymane.
 - Jeśli strona nie odpowie **już przy pierwszym wczytaniu**, komunikat
   **„Strona nie odpowiada”** podpowiada, że brakuje skryptu albo strona blokuje
   wyświetlanie w ramce.
@@ -161,7 +173,12 @@ Wymagania i ograniczenia:
   lub Cloudflare). Skrypt tego nie obejdzie – w takim przypadku potrzebna jest
   zmiana konfiguracji albo plugin (planowany).
 - Wtyczki optymalizujące (WP Rocket, Autoptimize, LiteSpeed): wyklucz
-  `annotator.js` z łączenia i opóźniania skryptów.
+  `annotator.js` z łączenia i opóźniania skryptów (najlepiej po nazwie pliku).
+- Jeśli recenzowana strona ma własną politykę **CSP**, musi dopuszczać warstwę
+  adnotacji: `script-src` – origin aplikacji (wczytanie `/annotator.js`),
+  `style-src` – `'unsafe-inline'` (warstwa wstrzykuje własny element `<style>`),
+  `frame-ancestors` – origin aplikacji. Bez tego skrypt się nie wczyta albo
+  nakładka nie dostanie stylów i znaczniki będą niewidoczne.
 - Recenzować da się strony dostępne publicznie. Podgląd wersji roboczych
   (`?preview=true`) wymaga zalogowania do WordPressa, a ciasteczka logowania
   nie są wysyłane w ramce z innej domeny.
@@ -404,8 +421,10 @@ archiwum ZIP, podmianę plików bez zmiany linku (nowa treść, usunięcie stary
 plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
-(walidacja adresu, skrypt do wklejenia, klucze podstron, ID wpisu, odrzucanie
-obcych domen, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
+(walidacja adresu, skrypt do wklejenia bez wersji, klucze podstron, ID wpisu,
+odrzucanie obcych domen i kluczy wskazujących inny host, nagłówki cache warstwy
+adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
+zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
 
 ## Bezpieczeństwo i ograniczenia
