@@ -96,7 +96,7 @@ Firmowy Gmail (Google Workspace):
    NOTIFY_EMAIL=ja@learnetic.com SMTP_USER=design-review@learnetic.com \
    SMTP_PASS='abcd efgh ijkl mnop' PUBLIC_URL=https://review.twojadomena.pl npm start
    ```
-4. W panelu kliknij **✉ Testowy mail** (przycisk widać tylko, gdy powiadomienia
+4. W panelu kliknij **✉️ Testowy mail** (przycisk widać tylko, gdy powiadomienia
    są skonfigurowane) – błąd logowania SMTP pojawi się w komunikacie.
 
 Gmail wysyła maile jako `SMTP_USER`; inny `MAIL_FROM` zadziała tylko, jeśli to
