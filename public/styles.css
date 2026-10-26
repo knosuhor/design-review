@@ -721,6 +721,17 @@ body.viewer { overflow: hidden; }
 }
 .comment-foot button:hover { color: var(--text); text-decoration: underline; }
 .comment-foot button.del:hover { color: var(--danger); }
+/* Kopiowanie treści – mały przycisk w prawym dolnym rogu wpisu. */
+.comment-foot button.copy {
+  margin-left: auto;
+  font-size: .9rem;
+  line-height: 1;
+  padding: .1rem .3rem;
+  border-radius: 4px;
+}
+.comment-foot button.copy:hover { text-decoration: none; background: var(--border); }
+/* Treść komentarza można zaznaczać i kopiować. */
+.comment-body, .comment-quote { cursor: text; user-select: text; }
 .broken {
   font-size: .74rem;
   color: var(--danger);

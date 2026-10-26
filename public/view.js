@@ -97,6 +97,34 @@ function toast(message, isError, action) {
   }, action ? 6000 : 2600);
 }
 
+/**
+ * Kopiowanie do schowka. Clipboard API bywa zablokowane (np. w osadzonej
+ * przeglądarce) – wtedy zaznaczamy tekst w ukrytym polu.
+ */
+async function copyText(text, okMessage) {
+  const viaSelection = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (!ok) throw new Error('copy');
+  };
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text).catch(viaSelection);
+    } else {
+      viaSelection();
+    }
+    toast(okMessage || 'Skopiowano do schowka');
+  } catch {
+    toast('Nie udało się skopiować', true);
+  }
+}
+
 function isLive() {
   return !!project && project.kind === 'url';
 }
@@ -360,10 +388,27 @@ function renderList() {
       }
     });
 
-    foot.append(resolveBtn, delBtn);
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'copy';
+    copyBtn.textContent = '⧉';
+    copyBtn.title = 'Kopiuj treść komentarza';
+    copyBtn.setAttribute('aria-label', copyBtn.title);
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyText(comment.text, 'Treść komentarza skopiowana');
+    });
+
+    foot.append(resolveBtn, delBtn, copyBtn);
     li.appendChild(foot);
 
-    li.addEventListener('click', () => selectComment(comment.id, true));
+    li.addEventListener('click', () => {
+      // Kliknięcie kończące zaznaczanie tekstu komentarza nie wybiera wpisu –
+      // inaczej przebudowa listy skasowałaby zaznaczenie.
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && li.contains(sel.anchorNode)) return;
+      selectComment(comment.id, true);
+    });
 
     listEl.appendChild(li);
   });
@@ -374,7 +419,9 @@ function selectComment(id, scrollPage) {
   if (!comment) return;
 
   activeId = id;
-  renderList();
+  // Tylko przełączamy wyróżnienie – przebudowa listy przerywałaby podwójne
+  // kliknięcie (zaznaczenie słowa) w treści komentarza.
+  for (const el of listEl.children) el.classList.toggle('active', el.dataset.id === id);
 
   // Komentarz z innej podstrony: najpierw wczytaj tę stronę, potem go pokaż.
   if (comment.page && !onCurrentPage(comment)) {
@@ -516,14 +563,7 @@ resolvedFilter.addEventListener('click', () => {
   toast(hideResolved ? 'Rozwiązane komentarze zostały ukryte' : 'Rozwiązane komentarze są widoczne');
 });
 
-copyShare.addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(location.href);
-    toast('Link do udostępniania skopiowany');
-  } catch {
-    toast('Nie udało się skopiować linku', true);
-  }
-});
+copyShare.addEventListener('click', () => copyText(location.href, 'Link do udostępniania skopiowany'));
 
 /* ------------------------------- komunikacja ------------------------------- */
 
