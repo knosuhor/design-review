@@ -55,6 +55,58 @@ go przekazuje):
 set PUBLIC_URL=https://review.twojadomena.pl && npm start
 ```
 
+Wymagany jest Node.js 20 lub nowszy.
+
+## Powiadomienia mailowe
+
+Gdy recenzent doda komentarz, administrator dostaje maila. Komentarze są
+**zbierane per projekt**: mail wychodzi, gdy przez **4 minuty** nie pojawił się
+nowy komentarz, ale nie później niż **15 minut** od pierwszego niewysłanego.
+Kilkanaście uwag z jednej sesji recenzji to więc jeden mail, a nie kilkanaście.
+
+- W mailu: nazwa projektu, a przy każdym komentarzu autor, podstrona, treść,
+  zaznaczony fragment i link **„Pokaż komentarz”** (`/v/<id>?c=<komentarz>`) –
+  otwiera właściwą podstronę i wyróżnia komentarz.
+- Komentarze dodane przez właściciela (zalogowanego uid-em) nie wyzwalają maila.
+- Maksymalnie 20 maili na godzinę (komentowanie jest publiczne – limit chroni
+  skrzynkę). Nieudana wysyłka jest ponawiana po 5 minutach.
+- Stan („do którego komentarza już powiadomiono”) jest zapisany przy projekcie,
+  więc restart serwera nie gubi powiadomień ani ich nie dubluje. Komentarze
+  sprzed włączenia powiadomień nie są wysyłane.
+
+Konfiguracja (zmienne środowiskowe; bez `NOTIFY_EMAIL` powiadomienia są wyłączone):
+
+| Zmienna | Znaczenie |
+| --- | --- |
+| `NOTIFY_EMAIL` | adres, na który przychodzą powiadomienia |
+| `SMTP_USER` | konto nadawcy, np. `design-review@learnetic.com` |
+| `SMTP_PASS` | hasło – dla Gmaila **hasło aplikacji** (16 znaków) |
+| `SMTP_HOST` / `SMTP_PORT` | domyślnie `smtp.gmail.com` / `465` (587 = STARTTLS) |
+| `MAIL_FROM` | nadawca, domyślnie `SMTP_USER` |
+| `PUBLIC_URL` | adres aplikacji do linków w mailach (zalecane) |
+
+Firmowy Gmail (Google Workspace):
+
+1. Na koncie nadawcy włącz weryfikację dwuetapową.
+2. Utwórz hasło aplikacji: <https://myaccount.google.com/apppasswords>
+   (jeśli tej opcji nie ma, administrator Workspace musi dopuścić hasła
+   aplikacji albo udostępnić przekaźnik SMTP `smtp-relay.gmail.com`).
+3. Uruchom aplikację, np.:
+   ```bash
+   NOTIFY_EMAIL=ja@learnetic.com SMTP_USER=design-review@learnetic.com \
+   SMTP_PASS='abcd efgh ijkl mnop' PUBLIC_URL=https://review.twojadomena.pl npm start
+   ```
+4. W panelu kliknij **✉ Testowy mail** (przycisk widać tylko, gdy powiadomienia
+   są skonfigurowane) – błąd logowania SMTP pojawi się w komunikacie.
+
+Gmail wysyła maile jako `SMTP_USER`; inny `MAIL_FROM` zadziała tylko, jeśli to
+alias dodany na tym koncie. Bez `PUBLIC_URL` linki w mailach używają adresu, pod
+którym właściciel ostatnio otworzył aplikację (zapamiętanego w `data/notify.json`).
+
+Tryb testowy: `MAIL_TRANSPORT=log` zapisuje maile do `data/outbox/` zamiast
+je wysyłać. Czasy można skrócić zmiennymi `NOTIFY_QUIET_MS`, `NOTIFY_MAX_MS`
+i `NOTIFY_TICK_MS` (zob. sekcja **Testy**).
+
 ## Logowanie i dostęp
 
 - **Strona główna `/`** (lista stron, wgrywanie, usuwanie) wymaga zalogowania.
@@ -311,6 +363,7 @@ lib/store.js           magazyn danych (pliki JSON na dysku)
 lib/auth.js            logowanie uid-em + ochrona strony głównej
 lib/zip.js             bezpieczne rozpakowywanie ZIP, wykrywanie pliku startowego i pakowanie archiwum
 lib/mime.js            mapa typów MIME
+lib/notify.js          powiadomienia mailowe o nowych komentarzach (zbieranie i wysyłka)
 public/index.html      strona główna (lista stron, upload)
 public/app.js          logika strony głównej
 public/login.html      ekran logowania (jedno pole: uid)
@@ -335,6 +388,8 @@ sample/landing.zip     przykładowa strona do testów
 | `POST` | `/api/login` | publiczny | logowanie: `{ "uid": "…" }`, ustawia ciasteczko sesji |
 | `POST` | `/api/logout` | publiczny | wylogowanie (czyści ciasteczko) |
 | `GET` | `/api/session` | publiczny | `{ authed, uid }` – stan zalogowania dla interfejsu |
+| `GET` | `/api/notifications` | **tylko zalogowany** | stan powiadomień mailowych (`enabled`, adres, tryb, czasy) |
+| `POST` | `/api/notifications/test` | **tylko zalogowany** | wysyłka testowego maila |
 | `GET` | `/api/projects` | **tylko zalogowany** | lista stron + `snippet` (skrypt do wklejenia na stronach na żywo) |
 | `POST` | `/api/projects` | **tylko zalogowany** | upload ZIP (`multipart/form-data`: `file`, opcjonalnie `name`) |
 | `POST` | `/api/projects/url` | **tylko zalogowany** | strona na żywo: `{ "url": "https://…", "name": "…" }` (nazwa opcjonalna); zwraca projekt i `snippet` |
@@ -349,7 +404,7 @@ sample/landing.zip     przykładowa strona do testów
 | `POST` | `/api/projects/:id/comments` | publiczny\* | dodanie komentarza |
 | `PATCH` | `/api/projects/:id/comments/:commentId` | publiczny\* | zmiana treści / statusu „rozwiązany” |
 | `DELETE` | `/api/projects/:id/comments/:commentId` | publiczny\* | usunięcie komentarza |
-| `GET` | `/v/:id` | publiczny\* | widok recenzji |
+| `GET` | `/v/:id` | publiczny\* | widok recenzji (`?c=<id komentarza>` – otwiera jego podstronę i wyróżnia go) |
 | `GET` | `/p/:id/...` | publiczny\* | pliki wgranej strony |
 
 Endpointy oznaczone jako **tylko zalogowany** odpowiadają `401`, gdy brakuje
@@ -426,6 +481,15 @@ odrzucanie obcych domen i kluczy wskazujących inny host, nagłówki cache warst
 adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
+
+Testy powiadomień mailowych (zbieranie komentarzy, pomijanie komentarzy
+właściciela, czas maksymalny, treść i linki, mail testowy) uruchamiają się
+tylko na serwerze w trybie zapisu do pliku z krótkimi czasami – w innym
+przypadku są pomijane:
+
+```bash
+MAIL_TRANSPORT=log NOTIFY_EMAIL=test@example.com NOTIFY_QUIET_MS=1500 NOTIFY_MAX_MS=4000 NOTIFY_TICK_MS=250 npm start
+```
 
 ## Bezpieczeństwo i ograniczenia
 

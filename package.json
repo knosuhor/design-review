@@ -10,11 +10,12 @@
     "test": "node scripts/smoke-test.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
     "express": "^4.21.2",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "nodemailer": "^10.2.1"
   }
 }

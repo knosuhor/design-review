@@ -140,7 +140,7 @@ async function api(path, options) {
   try { data = await res.json(); } catch { /* brak JSON */ }
   if (res.status === 401 && data.unlock) {
     // Strona zabezpieczona hasłem – przejdź na ekran jego wpisywania.
-    location.href = data.unlock + '?next=' + encodeURIComponent(location.pathname);
+    location.href = data.unlock + '?next=' + encodeURIComponent(location.pathname + location.search);
     return new Promise(() => {});
   }
   if (!res.ok) throw new Error(data.error || `Błąd ${res.status}`);
@@ -765,7 +765,7 @@ async function loadSession() {
     const res = await fetch('/api/session');
     const data = await res.json();
     if (!data.authed) {
-      homeLink.href = '/login?next=' + encodeURIComponent(location.pathname);
+      homeLink.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
       homeIco.textContent = '🔑';
       homeLabel.textContent = 'Zaloguj';
       homeLink.title = 'Zaloguj się, aby zarządzać przesłanymi stronami';
@@ -796,8 +796,19 @@ async function init() {
     downloadZip.href = `/api/projects/${project.id}/archive`;
     downloadZip.hidden = isLive();
 
+    // Link z powiadomienia (?c=<id>) otwiera podstronę komentarza i go wyróżnia.
+    const linkedId = new URLSearchParams(location.search).get('c');
+    const linked = linkedId ? comments.find((c) => c.id === linkedId) : null;
+    if (linked) activeId = linked.id;
     renderList();
-    loadInFrame(project.entryUrl);
+    if (linked) {
+      const el = listEl.querySelector(`[data-id="${CSS.escape(linked.id)}"]`);
+      if (el) el.scrollIntoView({ block: 'nearest' });
+      loadInFrame(pageUrl(linked.page || project.entry), linked.id);
+    } else {
+      if (linkedId) toast('Nie znaleziono komentarza z linku – mógł zostać usunięty', true);
+      loadInFrame(project.entryUrl);
+    }
   } catch (err) {
     loader.hidden = true;
     nameEl.textContent = 'Nie znaleziono projektu';

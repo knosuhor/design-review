@@ -9,6 +9,7 @@ const fsp = fs.promises;
 
 const store = require('./lib/store');
 const auth = require('./lib/auth');
+const notify = require('./lib/notify');
 const { extractZip, detectEntry, packDir } = require('./lib/zip');
 const mime = require('./lib/mime');
 
@@ -50,6 +51,14 @@ function annotator() {
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
+
+// Adres do linków w mailach: PUBLIC_URL, a bez niego adres, pod którym
+// właściciel otworzył aplikację (tylko z jego żądań – nagłówka Host od obcych
+// nie bierzemy, bo mógłby podmienić linki w powiadomieniach).
+app.use((req, res, next) => {
+  if (PUBLIC_URL || auth.isAuthed(req)) notify.setBaseUrl(publicOrigin(req));
+  next();
+});
 
 /* ---------------------------------- utils --------------------------------- */
 
@@ -273,6 +282,22 @@ app.get('/api/session', (req, res) => {
   res.json({ authed, uid: authed ? auth.uid() : null, loginUrl: '/login' });
 });
 
+/* --------------------------- powiadomienia mailowe ------------------------ */
+
+app.get('/api/notifications', auth.requireAuthApi, (req, res) => {
+  res.json(notify.status());
+});
+
+/** Mail testowy – sprawdzenie konfiguracji SMTP z panelu. */
+app.post('/api/notifications/test', auth.requireAuthApi, async (req, res) => {
+  try {
+    await notify.sendTest();
+    res.json({ ok: true, to: notify.status().to });
+  } catch (err) {
+    res.status(400).json({ error: 'Nie udało się wysłać maila: ' + (err && err.message ? err.message : 'nieznany błąd') });
+  }
+});
+
 /* --------------------------------- upload -------------------------------- */
 
 const upload = multer({
@@ -312,6 +337,7 @@ app.post('/api/projects/url', auth.requireAuthApi, async (req, res) => {
     origin: url.origin,
     entry: pageKey(url),
     createdAt: Date.now(),
+    notifiedUpTo: Date.now(),
   };
   await store.addProject(project);
   res.status(201).json({ project: projectDto(project), snippet: annotatorSnippet(req) });
@@ -351,6 +377,7 @@ app.post('/api/projects', auth.requireAuthApi, upload.single('file'), async (req
       files: files.length,
       size: req.file.size,
       createdAt: Date.now(),
+      notifiedUpTo: Date.now(),
     };
     await store.addProject(project);
     res.status(201).json({ project: projectDto(project) });
@@ -689,7 +716,10 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
   // ID wpisu WordPressa – komentarz trafia na swoją podstronę także po zmianie jej adresu.
   const postId = Number(body.postId);
   if (isUrlProject(project) && Number.isSafeInteger(postId) && postId > 0) comment.postId = postId;
+  // Komentarze właściciela (zalogowanego uid-em) nie wyzwalają powiadomień.
+  if (auth.isAuthed(req)) comment.byOwner = true;
   await store.addComment(project.id, comment);
+  notify.commentAdded(project.id);
   res.status(201).json({ comment });
 });
 
@@ -842,7 +872,8 @@ app.get('/v/:id', (req, res) => {
   if (!access.unlocked) {
     return res.redirect(
       302,
-      '/unlock/' + project.id + '?next=' + encodeURIComponent('/v/' + project.id)
+      // Zachowujemy parametry (np. ?c=<komentarz> z linku w mailu).
+      '/unlock/' + project.id + '?next=' + encodeURIComponent(safeNext(req.originalUrl) || '/v/' + project.id)
     );
   }
   res.sendFile(path.join(store.PUBLIC_DIR, 'view.html'));
@@ -908,6 +939,7 @@ app.use((err, req, res, next) => {
 (async () => {
   await store.init();
   const { uid, fresh } = await auth.init();
+  const mail = await notify.init();
   app.listen(PORT, HOST, () => {
     const url = `http://localhost:${PORT}`;
     console.log('');
@@ -918,6 +950,9 @@ app.use((err, req, res, next) => {
     console.log(`  Logowanie: ${url}/login`);
     console.log(`  Twój uid:  ${uid}`);
     if (fresh) console.log('  (uid wygenerowano i zapisano w data/config.json)');
+    console.log(mail.enabled
+      ? `  Powiadomienia: ${mail.to} (${mail.transport === 'log' ? 'zapis do data/outbox' : 'SMTP'})`
+      : '  Powiadomienia: wyłączone (ustaw NOTIFY_EMAIL i dane SMTP)');
     console.log('');
   });
 })().catch((err) => {

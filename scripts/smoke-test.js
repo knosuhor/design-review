@@ -609,6 +609,8 @@ async function main() {
   const liveDel = await fetch(`${BASE}/api/projects/${live.id}`, { method: 'DELETE' });
   check('usunięcie strony na żywo', liveDel.status === 200, String(liveDel.status));
 
+  await notificationTests();
+
   console.log('\n6. Sprzątanie');
   const delRes = await fetch(`${BASE}/api/projects/${project.id}`, { method: 'DELETE' });
   check('usunięcie projektu', delRes.status === 200);
@@ -620,6 +622,95 @@ async function main() {
 
   console.log(failures === 0 ? '\nWszystkie testy przeszły ✓\n' : `\nNiepowodzenia: ${failures}\n`);
   process.exit(failures === 0 ? 0 : 1);
+}
+
+/**
+ * Powiadomienia mailowe. Sprawdzamy je tylko na serwerze uruchomionym
+ * w trybie zapisu do pliku z krótkimi czasami, np.:
+ *   MAIL_TRANSPORT=log NOTIFY_EMAIL=test@example.com NOTIFY_QUIET_MS=1500 \
+ *   NOTIFY_MAX_MS=4000 NOTIFY_TICK_MS=250 npm start
+ */
+async function notificationTests() {
+  console.log('\n5e. Powiadomienia mailowe');
+  const status = await (await fetch(`${BASE}/api/notifications`)).json();
+  const quiet = (status.quietMinutes || 0) * 60000;
+  const max = (status.maxMinutes || 0) * 60000;
+  if (!status.enabled || status.transport !== 'log' || quiet > 10000) {
+    console.log('  – pominięte (serwer nie działa w trybie MAIL_TRANSPORT=log z krótkimi czasami)');
+    return;
+  }
+
+  const OUTBOX = path.join(__dirname, '..', 'data', 'outbox');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const mailsFor = (needle) => {
+    let files = [];
+    try { files = fs.readdirSync(OUTBOX).filter((f) => f.endsWith('.json')); } catch { return []; }
+    return files
+      .map((f) => JSON.parse(fs.readFileSync(path.join(OUTBOX, f), 'utf8')))
+      .filter((m) => String(m.subject).includes(needle))
+      .sort((a, b) => a.sentAt - b.sentAt);
+  };
+  const waitForMails = async (needle, count, timeout) => {
+    const end = Date.now() + timeout;
+    while (Date.now() < end) {
+      if (mailsFor(needle).length >= count) break;
+      await sleep(100);
+    }
+    return mailsFor(needle);
+  };
+
+  const name = 'Smoke powiadomienia ' + Date.now().toString(36);
+  const created = await (await fetch(`${BASE}/api/projects/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: 'https://example.com/', name }),
+  })).json();
+  const pid = created.project.id;
+  const addComment = (text, asOwner) => (asOwner ? fetch : realFetch)(`${BASE}/api/projects/${pid}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author: 'Recenzent', text, type: 'pin', page: '/', anchor: { x: 1, y: 1 } }),
+  }).then((r) => r.json());
+
+  const c1 = await addComment('Pierwsza uwaga <b>pogrubiona?</b>');
+  await addComment('Druga uwaga');
+  await addComment('Komentarz właściciela', true);
+  await sleep(quiet / 3);
+  check('przed upływem ciszy nic nie wychodzi', mailsFor(name).length === 0, String(mailsFor(name).length));
+
+  const first = await waitForMails(name, 1, quiet + 3000);
+  check('po ciszy wychodzi jeden zbiorczy mail', first.length === 1, String(first.length));
+  const mail = first[0] || {};
+  check('temat podaje liczbę komentarzy i projekt', /2 nowe komentarze – /.test(mail.subject || ''), mail.subject);
+  check('mail trafia na adres z konfiguracji', mail.to === status.to, mail.to);
+  check('treść zawiera oba komentarze recenzenta',
+    /Pierwsza uwaga/.test(mail.text || '') && /Druga uwaga/.test(mail.text || ''));
+  check('komentarz właściciela nie wyzwala powiadomienia', !/Komentarz właściciela/.test(mail.text || ''));
+  check('link prowadzi do konkretnego komentarza', (mail.text || '').includes(`/v/${pid}?c=${c1.comment.id}`),
+    (mail.text || '').slice(0, 200));
+  check('HTML komentarza jest zabezpieczony', /&lt;b&gt;pogrubiona\?&lt;\/b&gt;/.test(mail.html || ''));
+
+  await addComment('Tylko właściciel', true);
+  await sleep(quiet + 1000);
+  check('same komentarze właściciela nie dają maila', mailsFor(name).length === 1, String(mailsFor(name).length));
+
+  // Ciągłe komentowanie (krócej niż okno ciszy) – mail i tak wychodzi po czasie maksymalnym.
+  const start = Date.now();
+  let sentWhileActive = false;
+  while (Date.now() - start < max + quiet) {
+    await addComment('Seria ' + (Date.now() - start));
+    await sleep(quiet / 2);
+    if (mailsFor(name).length > 1) { sentWhileActive = true; break; }
+  }
+  check('przy ciągłym komentowaniu mail wychodzi po czasie maksymalnym', sentWhileActive);
+
+  const testRes = await fetch(`${BASE}/api/notifications/test`, { method: 'POST' });
+  check('mail testowy z panelu (200)', testRes.status === 200, String(testRes.status));
+  check('mail testowy zapisany', (await waitForMails('Testowe powiadomienie', 1, 2000)).length >= 1);
+  const anonTest = await realFetch(`${BASE}/api/notifications/test`, { method: 'POST' });
+  check('mail testowy tylko dla zalogowanego (401)', anonTest.status === 401, String(anonTest.status));
+
+  await fetch(`${BASE}/api/projects/${pid}`, { method: 'DELETE' });
 }
 
 main().catch((err) => {

@@ -20,6 +20,7 @@ const toastEl = $('#toast');
 const accountEl = $('#account');
 const uidBtn = $('#uid-btn');
 const logoutBtn = $('#logout-btn');
+const mailTestBtn = $('#mail-test-btn');
 const replaceInput = $('#replace-file');
 
 const liveForm = $('#live-form');
@@ -460,10 +461,35 @@ async function loadSession() {
     if (!data.authed) return requireLogin();
     currentUid = data.uid || '';
     accountEl.hidden = false;
+    loadNotifications();
   } catch {
     /* brak informacji o sesji – pasek konta zostaje ukryty */
   }
 }
+
+/** Przycisk testowego maila pokazujemy tylko, gdy powiadomienia są skonfigurowane. */
+async function loadNotifications() {
+  try {
+    const data = await api('/api/notifications');
+    if (!data.enabled) return;
+    mailTestBtn.hidden = false;
+    mailTestBtn.title = `Powiadomienia o komentarzach trafiają na ${data.to} – wyślij testową wiadomość`;
+  } catch {
+    /* bez informacji o powiadomieniach przycisk zostaje ukryty */
+  }
+}
+
+mailTestBtn.addEventListener('click', async () => {
+  mailTestBtn.disabled = true;
+  try {
+    const data = await api('/api/notifications/test', { method: 'POST' });
+    toast(`Testowy mail wysłany na ${data.to}`);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    mailTestBtn.disabled = false;
+  }
+});
 
 uidBtn.addEventListener('click', () => {
   if (!currentUid) return;
