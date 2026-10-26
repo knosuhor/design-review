@@ -469,15 +469,16 @@ async function main() {
   check('dozwolone originy obejmują wariant www',
     JSON.stringify(live.origins) === JSON.stringify(['https://example.com', 'https://www.example.com']),
     JSON.stringify(live.origins));
-  check('odpowiedź zawiera skrypt do wklejenia',
-    /<script src="https?:\/\/[^"]+\/annotator\.js\?v=[0-9a-f]{12}" defer><\/script>/.test(liveJson.snippet || ''),
+  // Skrypt wkleja się raz, więc nie może zawierać wersji – stary numer
+  // zostałby w kodzie strony po aktualizacji aplikacji.
+  check('odpowiedź zawiera skrypt do wklejenia (bez wersji w adresie)',
+    /<script src="https?:\/\/[^"]+\/annotator\.js" defer><\/script>/.test(liveJson.snippet || ''),
     liveJson.snippet);
 
   const listLive = await (await fetch(`${BASE}/api/projects`)).json();
   check('lista projektów podaje skrypt', listLive.snippet === liveJson.snippet);
   check('strona na żywo jest na liście', listLive.projects.some((p) => p.id === live.id && p.kind === 'url'));
 
-  const snippetVersion = /annotator\.js\?v=([0-9a-f]{12})/.exec(liveJson.snippet || '');
   const annRes = await realFetch(`${BASE}/annotator.js`);
   check('annotator.js dostępny publicznie jako JavaScript',
     annRes.status === 200 && /javascript/.test(annRes.headers.get('content-type') || ''),
@@ -485,20 +486,33 @@ async function main() {
 
   const annBody = await annRes.text();
   const annHash = crypto.createHash('sha1').update(annBody).digest('hex').slice(0, 12);
-  check('wersja w adresie skryptu zgadza się z treścią pliku',
-    snippetVersion && snippetVersion[1] === annHash, `${snippetVersion && snippetVersion[1]} vs ${annHash}`);
 
   const annVersioned = await realFetch(`${BASE}/annotator.js?v=${annHash}`);
-  check('wersjonowany adres można cache\'ować „na zawsze”',
+  check('aktualna wersja (strony z ZIP-a) może być w cache „na zawsze”',
     /immutable/.test(annVersioned.headers.get('cache-control') || ''),
     annVersioned.headers.get('cache-control'));
-  const annPlain = await realFetch(`${BASE}/annotator.js`);
-  check('adres bez wersji wymaga sprawdzenia w cache (no-cache)',
-    /no-cache/.test(annPlain.headers.get('cache-control') || ''),
-    annPlain.headers.get('cache-control'));
+  check('skrypt wklejany na strony na żywo jest sprawdzany przy każdym użyciu (no-cache)',
+    /no-cache/.test(annRes.headers.get('cache-control') || '') && !/immutable/.test(annRes.headers.get('cache-control') || ''),
+    annRes.headers.get('cache-control'));
+  const annStale = await realFetch(`${BASE}/annotator.js?v=000000000000`);
+  check('nieaktualna wersja nie jest cache\'owana „na zawsze”',
+    /no-cache/.test(annStale.headers.get('cache-control') || ''), annStale.headers.get('cache-control'));
+
+  // fetch() z Node przy If-None-Match sam dokłada "Cache-Control: no-cache",
+  // co wymusza pełną odpowiedź – dlatego zwykłe żądanie przez moduł http.
+  const etag = annRes.headers.get('etag');
+  const revalidatedStatus = etag ? await new Promise((resolve) => {
+    const lib = require(BASE.startsWith('https') ? 'https' : 'http');
+    lib.get(`${BASE}/annotator.js`, { headers: { 'If-None-Match': etag } }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    }).on('error', () => resolve(0));
+  }) : 0;
+  check('niezmieniony skrypt kończy się odpowiedzią 304 (ETag)',
+    revalidatedStatus === 304, etag ? String(revalidatedStatus) : 'brak ETag');
 
   const zipHtmlForAnnotator = await (await fetch(`${BASE}/p/${project.id}/`)).text();
-  check('strona z ZIP-a też podaje wersję skryptu',
+  check('strona z ZIP-a podaje aktualną wersję skryptu',
     zipHtmlForAnnotator.includes(`/annotator.js?v=${annHash}`));
 
   const liveComment = (page, extra) => fetch(`${BASE}/api/projects/${live.id}/comments`, {

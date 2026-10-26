@@ -20,18 +20,32 @@ const MAX_UPLOAD = 50 * 1024 * 1024; // 50 MB
 const PUBLIC_URL = String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
 
 /**
- * Wersja warstwy adnotacji: skrót treści `public/annotator.js`. Trafia do
- * adresu skryptu (`/annotator.js?v=…`) wklejanego na strony na żywo oraz do
- * stron z ZIP-a, dzięki czemu po aktualizacji aplikacji przeglądarki ani cache
- * pośrednie (Cloudflare, wtyczki) nie podadzą starej wersji.
+ * Warstwa adnotacji (`public/annotator.js`) i jej wersja – skrót treści.
+ * Wersja trafia do adresu skryptu na stronach z ZIP-a (`/annotator.js?v=…`),
+ * bo serwer wstawia go przy każdym wczytaniu strony. Skrypt wklejany na strony
+ * na żywo wersji NIE ma: wkleja się go raz, więc stary numer zostałby w kodzie
+ * strony po aktualizacji. Plik czytamy ponownie, gdy zmieni się na dysku
+ * (np. przy `npm run dev`, który nie śledzi plików z public/).
  */
 const ANNOTATOR_FILE = path.join(store.PUBLIC_DIR, 'annotator.js');
-const ANNOTATOR_JS = (() => {
-  try { return fs.readFileSync(ANNOTATOR_FILE); } catch { return null; }
-})();
-const ANNOTATOR_VERSION = ANNOTATOR_JS
-  ? crypto.createHash('sha1').update(ANNOTATOR_JS).digest('hex').slice(0, 12)
-  : 'dev';
+const annotatorCache = { mtimeMs: -1, body: null, version: 'dev' };
+
+function annotator() {
+  let stat = null;
+  try { stat = fs.statSync(ANNOTATOR_FILE); } catch { /* brak pliku */ }
+  if (!stat) return { body: null, version: 'dev' };
+  if (stat.mtimeMs !== annotatorCache.mtimeMs) {
+    try {
+      const body = fs.readFileSync(ANNOTATOR_FILE);
+      annotatorCache.body = body;
+      annotatorCache.version = crypto.createHash('sha1').update(body).digest('hex').slice(0, 12);
+      annotatorCache.mtimeMs = stat.mtimeMs;
+    } catch {
+      return { body: null, version: 'dev' };
+    }
+  }
+  return annotatorCache;
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -122,7 +136,8 @@ function publicOrigin(req) {
 }
 
 function annotatorSnippet(req) {
-  return '<script src="' + publicOrigin(req) + '/annotator.js?v=' + ANNOTATOR_VERSION + '" defer></script>';
+  // Bez wersji w adresie – zob. komentarz przy annotator().
+  return '<script src="' + publicOrigin(req) + '/annotator.js" defer></script>';
 }
 
 /** Adres strony do recenzji: tylko http(s), bez danych logowania i kotwicy. */
@@ -755,7 +770,7 @@ function isUtf8(buffer) {
  */
 function injectAnnotator(html, page) {
   const clean = html.replace(CSP_META_RE, '');
-  const tag = '<script src="/annotator.js?v=' + ANNOTATOR_VERSION + '" data-page="' + escapeAttr(page) + '"></script>';
+  const tag = '<script src="/annotator.js?v=' + annotator().version + '" data-page="' + escapeAttr(page) + '"></script>';
   if (/<\/body\s*>/i.test(clean)) return clean.replace(/<\/body\s*>/i, tag + '\n</body>');
   if (/<\/html\s*>/i.test(clean)) return clean.replace(/<\/html\s*>/i, tag + '\n</html>');
   return clean + '\n' + tag;
@@ -854,16 +869,18 @@ app.use((req, res, next) => {
 });
 
 /**
- * Warstwa adnotacji. Wersjonowany adres (`?v=<hash>`) można trzymać w cache
- * „na zawsze”, a adres bez wersji – tylko z każdorazowym sprawdzeniem
- * (`no-cache`), żeby po aktualizacji nikt nie utknął na starej wersji.
+ * Warstwa adnotacji. Adres z aktualną wersją (`?v=<hash>`, tylko strony
+ * z ZIP-a) można trzymać w cache „na zawsze”. Każdy inny – w tym skrypt
+ * wklejony na strony na żywo – wymaga sprawdzenia przy każdym użyciu
+ * (`no-cache`); dzięki ETag niezmieniony plik kończy się odpowiedzią 304.
  */
 app.get('/annotator.js', (req, res) => {
-  if (!ANNOTATOR_JS) return res.status(404).type('js').send('// brak pliku annotator.js');
-  const versioned = ANNOTATOR_VERSION !== 'dev' && String(req.query.v || '') === ANNOTATOR_VERSION;
+  const { body, version } = annotator();
+  if (!body) return res.status(404).type('js').send('// brak pliku annotator.js');
+  const versioned = version !== 'dev' && String(req.query.v || '') === version;
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Cache-Control', versioned ? 'public, max-age=31536000, immutable' : 'no-cache');
-  res.send(ANNOTATOR_JS);
+  res.send(body);
 });
 
 app.use(express.static(store.PUBLIC_DIR, { extensions: ['html'], index: 'index.html' }));

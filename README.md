@@ -128,9 +128,13 @@ Jak to działa:
   się **tylko wtedy, gdy ramką jest widok Design Review** (rozpoznaje go po
   adresie, z którego sam został pobrany). Zwykli odwiedzający, a także obce
   strony osadzające witrynę w ramce, nie widzą żadnej zmiany i nic nie dostają.
-- Adres skryptu zawiera wersję treści (`/annotator.js?v=…`), a ta wersja jest
-  cache'owana „na zawsze”. Po aktualizacji aplikacji numer się zmienia, więc
-  przeglądarka ani cache pośredni nie podadzą starej warstwy adnotacji.
+- Skrypt do wklejenia **nie zawiera wersji w adresie** i jest wysyłany
+  z `Cache-Control: no-cache`: przeglądarka przy każdym użyciu krótko sprawdza,
+  czy plik się zmienił (niezmieniony kończy się odpowiedzią 304). Dzięki temu
+  po aktualizacji aplikacji recenzenci od razu dostają nową warstwę adnotacji,
+  a skryptu na stronie nie trzeba wklejać ponownie. Wersja (`/annotator.js?v=…`,
+  cache'owana „na zawsze”) jest tylko na stronach z ZIP-a, gdzie serwer wstawia
+  skrypt przy każdym wczytaniu strony.
 - Komentarz zapamiętuje ścieżkę podstrony (np. `/oferta/`; przy odnośnikach
   `?p=123` / `?page_id=123` także ten parametr) oraz **ID wpisu WordPressa**
   (z klas `page-id-…` / `postid-…` na `<body>`) – dzięki temu zostaje na swojej
@@ -169,9 +173,7 @@ Wymagania i ograniczenia:
   lub Cloudflare). Skrypt tego nie obejdzie – w takim przypadku potrzebna jest
   zmiana konfiguracji albo plugin (planowany).
 - Wtyczki optymalizujące (WP Rocket, Autoptimize, LiteSpeed): wyklucz
-  `annotator.js` z łączenia i opóźniania skryptów (nazwa pliku występuje
-  w adresie także w wersji z `?v=…`, więc wykluczaj po nazwie, nie po całym
-  adresie).
+  `annotator.js` z łączenia i opóźniania skryptów (najlepiej po nazwie pliku).
 - Jeśli recenzowana strona ma własną politykę **CSP**, musi dopuszczać warstwę
   adnotacji: `script-src` – origin aplikacji (wczytanie `/annotator.js`),
   `style-src` – `'unsafe-inline'` (warstwa wstrzykuje własny element `<style>`),
@@ -419,7 +421,7 @@ archiwum ZIP, podmianę plików bez zmiany linku (nowa treść, usunięcie stary
 plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
-(walidacja adresu, skrypt do wklejenia wraz z wersją, klucze podstron, ID wpisu,
+(walidacja adresu, skrypt do wklejenia bez wersji, klucze podstron, ID wpisu,
 odrzucanie obcych domen i kluczy wskazujących inny host, nagłówki cache warstwy
 adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
