@@ -14,6 +14,9 @@
   --accent-hover: #4338ca;
   --accent-weak: #eef2ff;
   --accent-border: #c7d2fe;
+  /* Imiona autorów i wzmianki – #C0C0FF ginie na białym tle, więc w jasnym
+     motywie ciemniejszy odcień tego samego fioletu (kontrast ok. 6,7:1). */
+  --name: #4b4bc8;
   --danger: #dc2626;
   --danger-weak: #fef2f2;
   --ok: #059669;
@@ -38,6 +41,7 @@
     --accent-hover: #8f8ffa;
     --accent-weak: #1e2035;
     --accent-border: #34396a;
+    --name: #c0c0ff;
     --danger: #f0736c;
     --danger-weak: #2a1a1a;
     --ok: #34d399;
@@ -717,7 +721,9 @@ body.viewer { overflow: hidden; }
   font-size: .7rem;
   font-weight: 700;
 }
-.author { font-weight: 600; font-size: .88rem; }
+.author { font-weight: 600; font-size: .88rem; color: var(--name); }
+/* Wzmianka @Imię w treści komentarza lub odpowiedzi. */
+.mention { color: var(--name); font-weight: 600; }
 .time { color: var(--muted); font-size: .76rem; margin-left: auto; white-space: nowrap; }
 /* Nazwa podstrony przy komentarzu dotyczącym innego pliku. */
 .page-chip {

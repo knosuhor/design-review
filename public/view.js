@@ -67,6 +67,7 @@ let hideResolved = localStorage.getItem(FILTER_KEY) === '1';
 let toastTimer = null;
 let replyOpenId = null;   // komentarz, na który właśnie odpowiadamy
 let emailNotifications = false; // czy serwer wysyła powiadomienia uczestnikom (pole e-mail)
+let isOwner = false;      // zalogowany właściciel – pole e-mail ukryte (ma powiadomienia administratora)
 let replyDraft = { author: '', email: '', text: '' }; // formularz odpowiedzi (przetrwa przebudowę listy)
 let replyFocusPending = false; // ustaw fokus w formularzu odpowiedzi po jego otwarciu
 
@@ -319,7 +320,7 @@ function renderList() {
 
     const body = document.createElement('div');
     body.className = 'comment-body';
-    body.textContent = comment.text;
+    fillWithMentions(body, comment.text, comment.mentionNames);
 
     li.append(head, body);
 
@@ -472,7 +473,7 @@ function renderReplies(comment, replies) {
 
     const body = document.createElement('div');
     body.className = 'reply-body';
-    body.textContent = reply.text;
+    fillWithMentions(body, reply.text, reply.mentionNames);
 
     item.append(head, body);
     list.appendChild(item);
@@ -486,6 +487,42 @@ function replaceComment(updated) {
 }
 
 /* ------------------------ powiadomienia uczestników ------------------------ */
+
+/**
+ * Treść z wyróżnionymi wzmiankami (@Imię). Imiona zapisane przez serwer
+ * pozwalają wyróżnić też wieloczłonowe („@Ewa Kowalska”); bez nich – jedno
+ * słowo po @. Tekst wstawiamy jako węzły tekstowe, nigdy jako HTML.
+ */
+function fillWithMentions(el, text, names) {
+  const value = String(text || '');
+  const known = (Array.isArray(names) ? names : [])
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp('(^|[\\s(\\[{"\'„«])@(' + (known.length ? known.join('|') + '|' : '') + '[\\p{L}\\p{N}_-]+)', 'gu');
+  el.textContent = '';
+  let last = 0;
+  for (const m of value.matchAll(re)) {
+    const start = m.index + m[1].length;
+    if (start > last) el.append(value.slice(last, start));
+    const tag = document.createElement('span');
+    tag.className = 'mention';
+    tag.textContent = '@' + m[2];
+    el.append(tag);
+    last = start + 1 + m[2].length;
+  }
+  if (last < value.length) el.append(value.slice(last));
+}
+
+/** Pole e-mail tylko dla recenzentów i tylko gdy serwer wysyła powiadomienia. */
+function emailEnabled() {
+  return emailNotifications && !isOwner;
+}
+
+function applyEmailVisibility() {
+  emailField.hidden = !emailEnabled();
+  if (replyOpenId) renderList();
+}
 
 function savedEmail() {
   return localStorage.getItem(EMAIL_KEY) || '';
@@ -502,7 +539,7 @@ function updateUnsubscribe() {
  */
 function afterPost(data, author, email, message) {
   localStorage.setItem(NAME_KEY, author);
-  if (emailNotifications) {
+  if (emailEnabled()) {
     if (email) localStorage.setItem(EMAIL_KEY, email);
     else localStorage.removeItem(EMAIL_KEY);
   }
@@ -578,7 +615,7 @@ function renderReplyForm(comment, focusField, caret) {
   email.title = 'Podaj, jeśli chcesz dostawać powiadomienia o odpowiedziach w tym wątku';
   email.dataset.replyField = 'email';
   email.value = replyDraft.email || savedEmail();
-  email.hidden = !emailNotifications;
+  email.hidden = !emailEnabled();
   email.addEventListener('input', () => { replyDraft.email = email.value; });
 
   const row = document.createElement('div');
@@ -619,7 +656,7 @@ function renderReplyForm(comment, focusField, caret) {
     e.preventDefault();
     const author = name.value.trim();
     const body = text.value.trim();
-    const mail = emailNotifications ? email.value.trim() : '';
+    const mail = emailEnabled() ? email.value.trim() : '';
     if (!author) { error.hidden = false; error.textContent = 'Podaj nazwę.'; name.focus(); return; }
     if (!body) { error.hidden = false; error.textContent = 'Wpisz treść odpowiedzi.'; text.focus(); return; }
     submit.disabled = true;
@@ -715,7 +752,7 @@ function openForm(request, previewText) {
 
   const saved = localStorage.getItem(NAME_KEY) || '';
   if (saved && !authorInput.value) authorInput.value = saved;
-  if (emailNotifications && !emailInput.value) emailInput.value = savedEmail();
+  if (emailEnabled() && !emailInput.value) emailInput.value = savedEmail();
 
   (authorInput.value.trim() ? textInput : authorInput).focus();
 }
@@ -734,7 +771,7 @@ form.addEventListener('submit', async (e) => {
 
   const author = authorInput.value.trim();
   const text = textInput.value.trim();
-  const email = emailNotifications ? emailInput.value.trim() : '';
+  const email = emailEnabled() ? emailInput.value.trim() : '';
   if (!author) { formError.hidden = false; formError.textContent = 'Podaj nazwę.'; authorInput.focus(); return; }
   if (!text) { formError.hidden = false; formError.textContent = 'Wpisz treść komentarza.'; textInput.focus(); return; }
 
@@ -1009,6 +1046,8 @@ async function loadSession() {
   try {
     const res = await fetch('/api/session');
     const data = await res.json();
+    isOwner = Boolean(data.authed);
+    applyEmailVisibility();
     if (!data.authed) {
       homeLink.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
       homeIco.textContent = '🔑';
@@ -1026,7 +1065,7 @@ async function init() {
     const data = await api(`/api/projects/${projectId}`);
     project = data.project;
     emailNotifications = Boolean(data.emailNotifications);
-    emailField.hidden = !emailNotifications;
+    applyEmailVisibility();
     updateUnsubscribe();
     comments = data.comments || [];
     activeId = null;

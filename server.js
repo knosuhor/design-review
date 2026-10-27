@@ -742,8 +742,10 @@ function commentsWithPage(comments, project) {
  * Bez skonfigurowanej wysyłki pole jest ignorowane (nie zapisujemy adresów,
  * których i tak nie użyjemy).
  */
-function parseOptionalEmail(raw) {
+function parseOptionalEmail(raw, req) {
   if (!notify.status().participants) return '';
+  // Właściciel i tak dostaje zbiorcze powiadomienia administratora.
+  if (auth.isAuthed(req)) return '';
   if (raw == null || String(raw).trim() === '') return '';
   return mentions.normalizeEmail(raw) || null;
 }
@@ -766,8 +768,12 @@ async function prepareEntry(project, text, email) {
 async function registerParticipants(project, entry, author, email, notifyList) {
   let token = null;
   if (!notify.status().participants) return token;
-  if (email) token = await subscribers.subscribe(project.id, email, author, entry.createdAt);
+  // Adres administratora (NOTIFY_EMAIL) pomijamy – wzmianki i odpowiedzi
+  // i tak trafiają do jego zbiorczych maili, bez dublowania.
+  const admin = notify.adminEmail();
+  if (email && email !== admin) token = await subscribers.subscribe(project.id, email, author, entry.createdAt);
   for (const address of notifyList) {
+    if (address === admin) continue;
     await subscribers.addMentioned(project.id, address, mentions.shortName(address), entry.createdAt);
   }
   return token;
@@ -789,7 +795,7 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
   const author = clampStr(body.author, 60);
   const rawText = clampStr(body.text, 4000);
   const type = body.type === 'pin' ? 'pin' : body.type === 'text' ? 'text' : null;
-  const email = parseOptionalEmail(body.email);
+  const email = parseOptionalEmail(body.email, req);
 
   if (!author) return res.status(400).json({ error: 'Podaj nazwę.' });
   if (!rawText) return res.status(400).json({ error: 'Treść komentarza nie może być pusta.' });
@@ -820,6 +826,8 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
   if (auth.isAuthed(req)) comment.byOwner = true;
   if (email) comment.email = email;
   if (processed.notify.length) comment.mentions = processed.notify;
+  // Same imiona (bez adresów) – widok wyróżnia nimi wzmianki w tekście.
+  if (processed.names.length) comment.mentionNames = processed.names;
   await store.addComment(project.id, comment);
   const token = await registerParticipants(project, comment, author, email, processed.notify);
   notify.commentAdded(project.id);
@@ -836,9 +844,10 @@ app.patch('/api/projects/:id/comments/:commentId', requireProjectAccessApi, asyn
   if (typeof (req.body || {}).resolved === 'boolean') patch.resolved = req.body.resolved;
   if (typeof (req.body || {}).text === 'string') {
     // Przy zmianie treści adresy też zamieniamy na imiona (bez nowych powiadomień).
-    const text = (await prepareEntry(project, clampStr(req.body.text, 4000), '')).text;
-    if (!text) return res.status(400).json({ error: 'Treść komentarza nie może być pusta.' });
-    patch.text = text;
+    const edited = await prepareEntry(project, clampStr(req.body.text, 4000), '');
+    if (!edited.text) return res.status(400).json({ error: 'Treść komentarza nie może być pusta.' });
+    patch.text = edited.text;
+    patch.mentionNames = edited.names;
   }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Brak zmian.' });
   const updated = await store.updateComment(project.id, req.params.commentId, patch);
@@ -860,7 +869,7 @@ app.post('/api/projects/:id/comments/:commentId/replies', requireProjectAccessAp
   const body = req.body || {};
   const author = clampStr(body.author, 60);
   const rawText = clampStr(body.text, 4000);
-  const email = parseOptionalEmail(body.email);
+  const email = parseOptionalEmail(body.email, req);
   if (!author) return res.status(400).json({ error: 'Podaj nazwę.' });
   if (!rawText) return res.status(400).json({ error: 'Treść odpowiedzi nie może być pusta.' });
   if (email === null) return res.status(400).json({ error: 'Nieprawidłowy adres e-mail.' });
@@ -871,6 +880,7 @@ app.post('/api/projects/:id/comments/:commentId/replies', requireProjectAccessAp
   if (auth.isAuthed(req)) reply.byOwner = true;
   if (email) reply.email = email;
   if (processed.notify.length) reply.mentions = processed.notify;
+  if (processed.names.length) reply.mentionNames = processed.names;
   const comment = await store.addReply(project.id, req.params.commentId, reply);
   if (!comment) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
   const token = await registerParticipants(project, reply, author, email, processed.notify);

@@ -869,6 +869,17 @@ async function participantTests(project) {
 
   const unknown = await (await post({ author: 'Ola', text: 'Pytanie do @jan.obcy@nieznana.test' })).json();
   check('obcy adres zamieniony na imię', unknown.comment.text === 'Pytanie do @Jan', JSON.stringify(unknown));
+  check('imiona wzmianek zapisane do wyróżnienia (bez adresów)',
+    JSON.stringify(unknown.comment.mentionNames) === '["Jan"]', JSON.stringify(unknown.comment.mentionNames));
+
+  const ownerPost = await (await fetch(`${BASE}/api/projects/${project.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author: 'Właściciel', text: 'Uwaga właściciela', email: 'wlasciciel@other.test',
+      type: 'pin', page: 'index.html', anchor: { x: 1, y: 1 } }),
+  })).json();
+  check('e-mail właściciela jest ignorowany (bez tokenu)', ownerPost.comment && !ownerPost.subscription,
+    JSON.stringify(ownerPost.subscription));
 
   if (!status.participants) {
     check('bez wysyłki adres w formularzu jest ignorowany (bez tokenu)', !withEmail.subscription);
@@ -972,6 +983,12 @@ async function participantTests(project) {
   check('wypisany nie dostaje kolejnych maili', mailsTo('anna@ext.test', name).length === 2);
   check('pozostali uczestnicy dostają', mailsTo('celina@ext.test', name).length === 2);
   check('administrator nie dostaje maili uczestnika', mailsTo(status.to, 'wzmian').length === 0);
+
+  await add({ author: 'Celina', text: `Pytanie do @${status.to}`, email: 'celina@ext.test' }, `/${root.comment.id}/replies`);
+  const subsFile = path.join(__dirname, '..', 'data', 'subscribers', p2.id + '.json');
+  const subs = JSON.parse(fs.readFileSync(subsFile, 'utf8'));
+  check('wzmianka administratora nie zapisuje go jako uczestnika (bez dublowania)', !(status.to in subs),
+    Object.keys(subs).join(', '));
 
   await fetch(`${BASE}/api/projects/${p2.id}`, { method: 'DELETE' });
 }

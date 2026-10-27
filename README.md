@@ -122,7 +122,10 @@ i odpowiedzi obok imienia pojawia się pole **„E-mail (opcjonalnie)”**:
 - maile są zbierane tak samo jak u administratora (4 / 15 minut), jeden na
   osobę i projekt; limit: 10 maili na dobę na adres i 60 na godzinę łącznie,
 - przeglądarka zapamiętuje adres jak imię; adresy **nie są widoczne** w API
-  ani na stronie – trzymane są osobno w `data/subscribers/<projekt>.json`.
+  ani na stronie – trzymane są osobno w `data/subscribers/<projekt>.json`,
+- zalogowany właściciel nie widzi pola e-mail (dostaje powiadomienia
+  administratora); adres z `NOTIFY_EMAIL` nie jest zapisywany jako uczestnik –
+  wzmianki i odpowiedzi trafiają tylko do zbiorczego maila administratora.
 
 **Wzmianki** – w treści `@adres@domena`:
 
@@ -133,7 +136,9 @@ i odpowiedzi obok imienia pojawia się pole **„E-mail (opcjonalnie)”**:
   domeny zmienia się w pierwszy człon z wielkiej litery
   (`@adam.adamowski@learnetic.com` → `@Adam`), adres uczestnika – w jego imię,
 - inny adres też zmienia się w imię, ale bez powiadomienia – piszący widzi
-  komunikat „Nie powiadomiono: …”.
+  komunikat „Nie powiadomiono: …”,
+- imiona autorów i wzmianki `@Imię` w treści są wyróżnione kolorem
+  (`#C0C0FF` w ciemnym motywie, ciemniejszy fiolet `#4B4BC8` w jasnym).
 
 **Wypisanie się:**
 
