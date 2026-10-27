@@ -104,11 +104,35 @@
   </form>
 </dialog>
 
+<dialog id="url-dialog" class="dialog">
+  <form id="url-form" autocomplete="off">
+    <h3>Zmień adres strony</h3>
+    <p class="muted small">
+      Np. po przeniesieniu ze stagingu na produkcję. Link do recenzji, hasło i komentarze
+      zostają – komentarze trafią na swoje podstrony, jeśli ich ścieżki się nie zmieniły.
+    </p>
+
+    <label class="field">
+      <span>Nowy adres strony</span>
+      <input id="url-input" type="text" inputmode="url" maxlength="2000" spellcheck="false" placeholder="https://twoja-strona.pl/">
+    </label>
+
+    <p class="error" id="url-error" hidden></p>
+
+    <div class="dialog-actions">
+      <span class="spacer"></span>
+      <button class="btn ghost" type="button" id="url-cancel">Anuluj</button>
+      <button class="btn primary" type="submit" id="url-save">Zmień adres</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="snippet-dialog" class="dialog wide">
   <h3>Dodaj skrypt na stronie</h3>
   <p class="muted small">
-    Strona <b id="snippet-site"></b> została dodana. Żeby recenzenci mogli ją komentować,
-    wklej poniższy skrypt raz na tej stronie – działa na wszystkich jej podstronach.
+    <span id="snippet-lead"></span>
+    Żeby recenzenci mogli ją komentować, wklej poniższy skrypt raz na tej stronie –
+    działa na wszystkich jej podstronach.
   </p>
   <textarea class="snippet" id="snippet-text" rows="2" readonly spellcheck="false"></textarea>
   <ol class="muted">

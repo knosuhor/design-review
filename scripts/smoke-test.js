@@ -606,6 +606,54 @@ async function main() {
   const liveView = await fetch(`${BASE}/v/${live.id}`);
   check('widok recenzji strony na żywo działa (200)', liveView.status === 200, String(liveView.status));
 
+  // Zmiana adresu strony na żywo (odpowiednik podmiany ZIP-a).
+  const changeUrl = (id, url, useFetch) => (useFetch || fetch)(`${BASE}/api/projects/${id}/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  const commentsBefore = (await (await fetch(`${BASE}/api/projects/${live.id}/comments`)).json()).comments.length;
+  check('zmiana adresu bez logowania zablokowana (401)',
+    (await changeUrl(live.id, 'https://nowa.example.com/', realFetch)).status === 401);
+  check('nieprawidłowy nowy adres odrzucony (400)', (await changeUrl(live.id, 'ftp://x')).status === 400);
+  check('zmiana adresu projektu ZIP odrzucona (400)', (await changeUrl(project.id, 'https://example.com/')).status === 400);
+
+  const movedRes = await changeUrl(live.id, 'https://nowa.example.com/start/');
+  const moved = await movedRes.json();
+  check('zmiana adresu (200)', movedRes.status === 200, JSON.stringify(moved));
+  check('link do recenzji bez zmian (to samo id)', moved.project && moved.project.id === live.id);
+  check('nowy adres, origin i strona startowa',
+    moved.project && moved.project.url === 'https://nowa.example.com/start/'
+      && moved.project.origin === 'https://nowa.example.com' && moved.project.entry === '/start/',
+    JSON.stringify(moved.project));
+  check('dozwolone originy nowej domeny',
+    moved.project && JSON.stringify(moved.project.origins) === JSON.stringify(['https://nowa.example.com', 'https://www.nowa.example.com']),
+    JSON.stringify(moved.project && moved.project.origins));
+  check('odpowiedź sygnalizuje zmianę domeny i podaje skrypt',
+    moved.originChanged === true && /annotator\.js/.test(moved.snippet || ''));
+  check('nazwa nadana ręcznie zostaje bez zmian',
+    moved.project && moved.project.name === 'Smoke live', moved.project && moved.project.name);
+  check('zapisano czas zmiany', moved.project && typeof moved.project.updatedAt === 'number');
+  const commentsAfter = (await (await fetch(`${BASE}/api/projects/${live.id}/comments`)).json()).comments.length;
+  check('komentarze zachowane po zmianie adresu', commentsAfter === commentsBefore, `${commentsBefore} → ${commentsAfter}`);
+  check('komentarze przyjmowane dla nowej domeny',
+    (await liveComment('/oferta/')).status === 201);
+  check('ścieżka ze starej domeny nadal jest ścieżką nowej (klucz podstrony)',
+    (await liveComment('/kontakt/')).status === 201);
+
+  const sameOrigin = await (await changeUrl(live.id, 'https://nowa.example.com/inna/')).json();
+  check('zmiana ścieżki w tej samej domenie nie zgłasza zmiany domeny', sameOrigin.originChanged === false);
+
+  const autoName = await (await fetch(`${BASE}/api/projects/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: 'https://staging.example.com/' }),
+  })).json();
+  const renamed = await (await changeUrl(autoName.project.id, 'https://example.org/')).json();
+  check('nazwa nadana automatycznie (domena) idzie za nowym adresem',
+    renamed.project && renamed.project.name === 'example.org', renamed.project && renamed.project.name);
+  await fetch(`${BASE}/api/projects/${autoName.project.id}`, { method: 'DELETE' });
+
   const liveDel = await fetch(`${BASE}/api/projects/${live.id}`, { method: 'DELETE' });
   check('usunięcie strony na żywo', liveDel.status === 200, String(liveDel.status));
 

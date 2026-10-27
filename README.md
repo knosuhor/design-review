@@ -154,8 +154,9 @@ i `NOTIFY_TICK_MS` (zob. sekcja **Testy**).
   potwierdzasz oknem dialogowym w stylu aplikacji (nie natywnym oknem
   przeglądarki),
 - sekcja **🌐 Recenzja strony na żywo (WordPress)** – dodanie strony po adresie
-  (szczegóły niżej). Przy takich stronach zamiast 🔄 i ⬇ jest ikona
-  **📋 Kopiuj skrypt** – kopiuje do schowka skrypt do wklejenia na stronie.
+  (szczegóły niżej). Przy takich stronach ikona **🔄** zmienia adres strony
+  (zamiast podmiany ZIP-a), zamiast ⬇ jest **📋 Kopiuj skrypt** – kopiuje
+  do schowka skrypt do wklejenia na stronie.
 
 ### Strony na żywo (WordPress)
 
@@ -247,6 +248,20 @@ strony:
   pozostaje nietknięta**,
 - komentarze, których miejsc nie da się już odnaleźć po zmianie struktury,
   nadal są widoczne na liście — z ostrzeżeniem.
+
+### Zmiana adresu strony na żywo
+
+Przy stronach na żywo ikona **🔄** otwiera okno **„Zmień adres strony”** –
+np. po przeniesieniu ze stagingu na produkcję:
+
+- link do recenzji (`/v/<id>`), hasło i komentarze zostają,
+- komentarze są przypisane do ścieżek podstron (`/oferta/`) i ID wpisów
+  WordPressa, więc przy tej samej strukturze adresów trafiają na swoje miejsca
+  także w nowej domenie,
+- nazwa projektu nadana automatycznie (sama domena) zmienia się razem z adresem;
+  nazwa wpisana ręcznie zostaje,
+- gdy zmienia się domena, od razu pojawia się okno ze skryptem – nowa strona
+  też musi go mieć wklejonego.
 
 ### Widok recenzji `/v/<id>`
 
@@ -393,6 +408,7 @@ sample/landing.zip     przykładowa strona do testów
 | `GET` | `/api/projects` | **tylko zalogowany** | lista stron + `snippet` (skrypt do wklejenia na stronach na żywo) |
 | `POST` | `/api/projects` | **tylko zalogowany** | upload ZIP (`multipart/form-data`: `file`, opcjonalnie `name`) |
 | `POST` | `/api/projects/url` | **tylko zalogowany** | strona na żywo: `{ "url": "https://…", "name": "…" }` (nazwa opcjonalna); zwraca projekt i `snippet` |
+| `POST` | `/api/projects/:id/url` | **tylko zalogowany** | zmiana adresu strony na żywo (`{ "url": "https://…" }`); link, hasło i komentarze bez zmian; zwraca `originChanged` i `snippet` |
 | `POST` | `/api/projects/:id/replace` | **tylko zalogowany** | podmiana plików istniejącej strony (`multipart/form-data`: `file`); link, hasło i komentarze bez zmian; nie dotyczy stron na żywo |
 | `DELETE` | `/api/projects/:id` | **tylko zalogowany** | usunięcie strony wraz z komentarzami |
 | `POST` | `/api/projects/:id/password` | **tylko zalogowany** | ustawienie (`{ "password": "…" }`) lub usunięcie (`""`) hasła strony |
@@ -477,7 +493,7 @@ plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
 (walidacja adresu, skrypt do wklejenia bez wersji, klucze podstron, ID wpisu,
-odrzucanie obcych domen i kluczy wskazujących inny host, nagłówki cache warstwy
+odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, nagłówki cache warstwy
 adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).

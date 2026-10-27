@@ -29,10 +29,17 @@ const liveName = $('#live-name');
 const liveBtn = $('#live-btn');
 const liveError = $('#live-error');
 const snippetDialog = $('#snippet-dialog');
-const snippetSite = $('#snippet-site');
 const snippetText = $('#snippet-text');
 const snippetCopy = $('#snippet-copy');
 const snippetClose = $('#snippet-close');
+const snippetLead = $('#snippet-lead');
+
+const urlDialog = $('#url-dialog');
+const urlForm = $('#url-form');
+const urlInput = $('#url-input');
+const urlError = $('#url-error');
+const urlCancel = $('#url-cancel');
+const urlSave = $('#url-save');
 
 const pwDialog = $('#pw-dialog');
 const pwForm = $('#pw-form');
@@ -46,6 +53,7 @@ const pwTitle = $('#pw-title');
 const pwDesc = $('#pw-desc');
 
 let pwProject = null;
+let urlProject = null;
 
 let selectedFile = null;
 let replaceTarget = null;
@@ -179,7 +187,10 @@ function renderProjects(projects) {
       : formatDate(project.createdAt);
     if (live) {
       const date = document.createElement('span');
-      date.textContent = formatDate(project.createdAt);
+      date.textContent = project.updatedAt
+        ? `Zmieniono adres ${formatDate(project.updatedAt)}`
+        : formatDate(project.createdAt);
+      if (project.updatedAt) date.title = `Dodano: ${formatDate(project.createdAt)}`;
       const dot = document.createElement('span');
       dot.className = 'dot';
       dot.textContent = '·';
@@ -257,6 +268,14 @@ function renderProjects(projects) {
     scriptBtn.setAttribute('aria-label', scriptBtn.title);
     scriptBtn.addEventListener('click', () => copyScript());
 
+    const urlBtn = document.createElement('button');
+    urlBtn.className = 'btn icon';
+    urlBtn.type = 'button';
+    urlBtn.textContent = '🔄';
+    urlBtn.title = 'Zmień adres strony (link do recenzji i komentarze bez zmian)';
+    urlBtn.setAttribute('aria-label', urlBtn.title);
+    urlBtn.addEventListener('click', () => openUrlDialog(project));
+
     const zipBtn = document.createElement('a');
     zipBtn.className = 'btn icon';
     zipBtn.href = `/api/projects/${project.id}/archive`;
@@ -312,7 +331,7 @@ function renderProjects(projects) {
       }
     });
 
-    if (live) actions.append(openBtn, openTab, scriptBtn, pwBtn, delBtn);
+    if (live) actions.append(openBtn, openTab, urlBtn, scriptBtn, pwBtn, delBtn);
     else actions.append(openBtn, openTab, replaceBtn, zipBtn, pwBtn, delBtn);
     item.append(thumb, main, actions);
     listEl.appendChild(item);
@@ -423,6 +442,17 @@ function copyScript() {
   copyText(snippet, 'Skrypt skopiowany – wklej go na stronie WordPress');
 }
 
+/** Okno ze skryptem – po dodaniu strony albo zmianie jej domeny. */
+function showSnippetDialog(reason, url) {
+  const site = document.createElement('b');
+  site.textContent = url;
+  snippetLead.textContent = '';
+  if (reason === 'moved') snippetLead.append('Strona ma teraz nowy adres: ', site, '. Sprawdź, czy jest na niej skrypt.');
+  else snippetLead.append('Strona ', site, ' została dodana.');
+  snippetText.value = snippet;
+  snippetDialog.showModal();
+}
+
 liveForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   liveError.hidden = true;
@@ -437,9 +467,7 @@ liveForm.addEventListener('submit', async (e) => {
     liveUrl.value = '';
     liveName.value = '';
     await loadProjects();
-    snippetSite.textContent = data.project.url;
-    snippetText.value = snippet;
-    snippetDialog.showModal();
+    showSnippetDialog('added', data.project.url);
   } catch (err) {
     liveError.hidden = false;
     liveError.textContent = err.message;
@@ -451,6 +479,50 @@ liveForm.addEventListener('submit', async (e) => {
 snippetText.addEventListener('focus', () => snippetText.select());
 snippetCopy.addEventListener('click', copyScript);
 snippetClose.addEventListener('click', () => snippetDialog.close());
+
+/* ------------------------- zmiana adresu strony --------------------------- */
+
+function openUrlDialog(project) {
+  urlProject = project;
+  urlInput.value = project.url || '';
+  urlError.hidden = true;
+  urlSave.disabled = false;
+  urlDialog.showModal();
+  setTimeout(() => urlInput.select(), 30);
+}
+
+urlCancel.addEventListener('click', () => urlDialog.close());
+
+urlForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!urlProject) return;
+  const value = urlInput.value.trim();
+  if (!value) {
+    urlError.hidden = false;
+    urlError.textContent = 'Podaj adres strony.';
+    urlInput.focus();
+    return;
+  }
+  urlSave.disabled = true;
+  urlError.hidden = true;
+  try {
+    const data = await api(`/api/projects/${urlProject.id}/url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: value }),
+    });
+    if (data.snippet) snippet = data.snippet;
+    urlDialog.close();
+    await loadProjects();
+    toast('Adres zmieniony – link do recenzji i komentarze bez zmian');
+    // Nowa domena musi mieć wklejony skrypt – przypominamy i dajemy go od razu.
+    if (data.originChanged) showSnippetDialog('moved', data.project.url);
+  } catch (err) {
+    urlError.hidden = false;
+    urlError.textContent = err.message;
+    urlSave.disabled = false;
+  }
+});
 
 /* -------------------------------- konto ----------------------------------- */
 

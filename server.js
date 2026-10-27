@@ -343,6 +343,30 @@ app.post('/api/projects/url', auth.requireAuthApi, async (req, res) => {
   res.status(201).json({ project: projectDto(project), snippet: annotatorSnippet(req) });
 });
 
+/**
+ * Zmiana adresu strony na żywo (np. przeniesienie ze stagingu na produkcję) –
+ * odpowiednik podmiany ZIP-a. Link do recenzji, hasło i komentarze zostają;
+ * komentarze są przypisane do ścieżek podstron, więc przy tej samej
+ * strukturze adresów trafiają na swoje miejsca także w nowej domenie.
+ */
+app.post('/api/projects/:id/url', auth.requireAuthApi, async (req, res) => {
+  const project = store.getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Projekt nie istnieje.' });
+  if (!isUrlProject(project)) {
+    return res.status(400).json({ error: 'Adres można zmienić tylko dla strony na żywo.' });
+  }
+  const url = parseSiteUrl((req.body || {}).url);
+  if (!url) return res.status(400).json({ error: 'Podaj poprawny adres strony (http:// lub https://).' });
+
+  const originChanged = url.origin !== project.origin;
+  const patch = { url: url.href, origin: url.origin, entry: pageKey(url), updatedAt: Date.now() };
+  // Nazwa nadana automatycznie (sama domena) idzie za nowym adresem.
+  if (project.name === new URL(project.origin).hostname) patch.name = url.hostname;
+
+  const updated = await store.updateProject(project.id, patch);
+  res.json({ project: projectDto(updated), originChanged, snippet: annotatorSnippet(req) });
+});
+
 app.post('/api/projects', auth.requireAuthApi, upload.single('file'), async (req, res) => {
   const tmpFile = req.file && req.file.path;
   let dir = null;
