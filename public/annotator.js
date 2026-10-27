@@ -109,13 +109,15 @@
     'box-sizing:border-box!important;}',
     'dra-overlay *{box-sizing:border-box!important;}',
 
-    'dra-pin{position:absolute!important;width:26px!important;height:26px!important;margin:-13px 0 0 -13px!important;',
-    'padding:0!important;border-radius:50%!important;background:#4f46e5!important;border:2px solid #fff!important;',
+    // Środek znacznika w punkcie (translate), a szerokość rośnie z liczbą – 999 też się mieści.
+    'dra-pin{position:absolute!important;min-width:26px!important;height:26px!important;margin:0!important;',
+    'transform:translate(-50%,-50%)!important;',
+    'padding:0 6px!important;border-radius:13px!important;background:#4f46e5!important;border:2px solid #fff!important;',
     'box-shadow:0 2px 6px rgba(0,0,0,.35)!important;display:grid!important;place-items:center!important;',
     'pointer-events:auto!important;cursor:pointer!important;color:#fff!important;font-size:12px!important;',
     'font-weight:700!important;font-family:system-ui,sans-serif!important;line-height:1!important;',
     'transition:transform .12s ease!important;user-select:none!important;-webkit-user-select:none!important;}',
-    'dra-pin:hover{transform:scale(1.15)!important;}',
+    'dra-pin:hover{transform:translate(-50%,-50%) scale(1.15)!important;}',
     'dra-pin.dra-resolved{background:#98a0b0!important;}',
     'dra-pin.dra-pending{background:#fff!important;border:2.5px dashed #4f46e5!important;color:#4f46e5!important;}',
 
@@ -127,13 +129,15 @@
     'dra-hl.dra-resolved{background:rgba(120,130,150,.18)!important;box-shadow:inset 0 -1.5px 0 rgba(120,130,150,.5)!important;}',
     'dra-hl.dra-pending{background:rgba(79,70,229,.12)!important;border:1.5px dashed #4f46e5!important;box-shadow:none!important;}',
 
-    'dra-hibadge{position:absolute!important;width:20px!important;height:20px!important;margin:-10px 0 0 -10px!important;',
-    'padding:0!important;border-radius:50%!important;background:#4f46e5!important;border:2px solid #fff!important;',
+    'dra-hibadge{position:absolute!important;min-width:20px!important;height:20px!important;margin:0!important;',
+    'transform:translate(-50%,-50%)!important;transition:transform .12s ease!important;',
+    'padding:0 4px!important;border-radius:10px!important;background:#4f46e5!important;border:2px solid #fff!important;',
     'color:#fff!important;font-size:11px!important;font-weight:700!important;font-family:system-ui,sans-serif!important;',
     'display:grid!important;place-items:center!important;pointer-events:auto!important;cursor:pointer!important;',
     'box-shadow:0 2px 6px rgba(0,0,0,.3)!important;line-height:1!important;user-select:none!important;',
     '-webkit-user-select:none!important;}',
     'dra-hibadge.dra-resolved{background:#98a0b0!important;}',
+    'dra-hibadge:hover{transform:translate(-50%,-50%) scale(1.15)!important;}',
     // Element jest teraz ukryty (zwinięty akordeon, zakładka, slajd) – znacznik
     // stoi w najbliższym widocznym miejscu, z przerywanym obrysem.
     'dra-pin.dra-concealed,dra-hibadge.dra-concealed{border-style:dashed!important;opacity:.8!important;}',
@@ -166,19 +170,10 @@
     // Zaznaczony komentarz: cały znacznik (razem z numerem) przeskalowany do
     // 120% i w kolorze pinezki z paska (#ee3a70). Obwódka pozostaje taka sama
     // jak w pozostałych.
-    'dra-pin.dra-selected{background:#ee3a70!important;transform:scale(1.2)!important;z-index:6!important;}',
-    'dra-pin.dra-resolved.dra-selected{background:#d3a0ad!important;}',
-    'dra-hibadge.dra-selected{background:#ee3a70!important;transform:scale(1.2)!important;z-index:6!important;}',
-    'dra-hibadge.dra-resolved.dra-selected{background:#d3a0ad!important;}',
-
-    // Fala jest osobnym elementem umieszczonym w środku znacznika, dzięki czemu
-    // rozchodzi się równo z jego środka i nie jest zniekształcana przez
-    // powiększenie samego znacznika.
-    '@keyframes dra-wave{0%{transform:scale(.92);opacity:.7;}70%{transform:scale(2.1);opacity:.16;}100%{transform:scale(2.6);opacity:0;}}',
-    'dra-halo{position:absolute!important;width:26px!important;height:26px!important;margin:-13px 0 0 -13px!important;',
-    'border-radius:50%!important;border:2px solid #ee3a70!important;pointer-events:none!important;z-index:2!important;',
-    'animation:dra-wave 1.6s ease-out infinite!important;}',
-    'dra-halo.dra-resolved{border-color:#d3a0ad!important;}',
+    'dra-pin.dra-selected,dra-hibadge.dra-selected{background:#ee3a70!important;',
+    'transform:translate(-50%,-50%) scale(1.2)!important;z-index:6!important;}',
+    'dra-pin.dra-selected:hover,dra-hibadge.dra-selected:hover{transform:translate(-50%,-50%) scale(1.3)!important;}',
+    'dra-pin.dra-resolved.dra-selected,dra-hibadge.dra-resolved.dra-selected{background:#d3a0ad!important;}',
     'dra-hl.dra-selected{background:rgba(99,102,241,.42)!important;box-shadow:inset 0 -2px 0 rgba(99,102,241,.85)!important;}',
   ].join('');
 
@@ -830,34 +825,68 @@
 
   var CONCEALED_TITLE = 'Element jest teraz ukryty (np. zwinięty akordeon, zakładka lub slajd)';
 
-  function makePin(comment, label, x, y, pending, concealed) {
-    var el = doc.createElement('dra-pin');
-    el.className = 'dra-pin'
-      + (comment.resolved ? ' dra-resolved' : '')
-      + (pending ? ' dra-pending' : '')
-      + (concealed ? ' dra-concealed' : '')
-      + (!pending && state.selectedId === comment.id ? ' dra-selected' : '');
-    if (!pending) el.setAttribute('data-comment-id', comment.id);
-    if (concealed) el.setAttribute('title', CONCEALED_TITLE);
-    el.textContent = label == null ? '' : String(label);
+  /*
+   * Znaczniki (pinezki i numery zaznaczeń) zostają między przerysowaniami –
+   * zmienia się tylko ich położenie i wygląd. Nowy element pod kursorem
+   * zaczynałby animację powiększenia od zera, więc przy częstych
+   * przerysowaniach (strony z animacjami) znacznik pulsował.
+   */
+  var markers = {};
+  var usedMarkers = {};
+
+  function marker(tag, key) {
+    var el = markers[key];
+    if (!el) {
+      el = doc.createElement(tag);
+      markers[key] = el;
+      pinLayer.appendChild(el);
+    }
+    usedMarkers[key] = true;
+    return el;
+  }
+
+  function sweepMarkers() {
+    for (var key in markers) {
+      if (Object.prototype.hasOwnProperty.call(markers, key) && !usedMarkers[key]) {
+        if (markers[key].parentNode) markers[key].parentNode.removeChild(markers[key]);
+        delete markers[key];
+      }
+    }
+    usedMarkers = {};
+  }
+
+  /** Ustawia wygląd znacznika (bez zbędnych zmian w DOM). */
+  function updateMarker(el, base, comment, label, x, y, opts) {
+    var cls = base
+      + (comment.resolved && !opts.pending ? ' dra-resolved' : '')
+      + (opts.pending ? ' dra-pending' : '')
+      + (opts.concealed ? ' dra-concealed' : '')
+      + (!opts.pending && state.selectedId === comment.id ? ' dra-selected' : '');
+    if (el.className !== cls) el.className = cls;
+    if (opts.pending) el.removeAttribute('data-comment-id');
+    else if (el.getAttribute('data-comment-id') !== comment.id) el.setAttribute('data-comment-id', comment.id);
+    if (opts.concealed) el.setAttribute('title', CONCEALED_TITLE);
+    else el.removeAttribute('title');
+    var text = label == null ? '' : String(label);
+    if (el.textContent !== text) el.textContent = text;
     el.style.left = x + 'px';
     el.style.top = y + 'px';
     return el;
   }
 
+  function makePin(comment, label, x, y, pending, concealed) {
+    var el = marker('dra-pin', pending ? 'pending' : 'pin:' + comment.id);
+    return updateMarker(el, 'dra-pin', comment, label, x, y, { pending: pending, concealed: concealed });
+  }
+
+  function makeBadge(comment, num, x, y, concealed) {
+    var el = marker('dra-hibadge', 'badge:' + comment.id);
+    return updateMarker(el, 'dra-hibadge', comment, num, x, y, { concealed: concealed });
+  }
+
   /** Numer komentarza tekstowego, gdy cały zaznaczony tekst jest ukryty. */
   function appendConcealedBadge(comment, num, point) {
-    var badge = doc.createElement('dra-hibadge');
-    badge.className = 'dra-hibadge dra-concealed'
-      + (comment.resolved ? ' dra-resolved' : '')
-      + (state.selectedId === comment.id ? ' dra-selected' : '');
-    badge.setAttribute('data-comment-id', comment.id);
-    badge.setAttribute('title', CONCEALED_TITLE);
-    badge.textContent = String(num);
-    badge.style.left = point.x + 'px';
-    badge.style.top = point.y + 'px';
-    hlLayer.appendChild(badge);
-    return { x: point.x, y: point.y };
+    makeBadge(comment, num, point.x, point.y, true);
   }
 
   function appendHighlight(comment, rects, num, pending) {
@@ -876,34 +905,13 @@
       hlLayer.appendChild(el);
     }
 
-    if (pending || !rects.length) return null;
+    if (pending || !rects.length) return;
     var last = rects[rects.length - 1];
-    var badge = doc.createElement('dra-hibadge');
-    badge.className = 'dra-hibadge'
-      + (comment.resolved ? ' dra-resolved' : '')
-      + (state.selectedId === comment.id ? ' dra-selected' : '');
-    badge.setAttribute('data-comment-id', comment.id);
-    badge.textContent = String(num);
-    badge.style.left = (last.right + 2) + 'px';
-    badge.style.top = (last.top + last.height / 2) + 'px';
-    hlLayer.appendChild(badge);
-    return { x: last.right + 2, y: last.top + last.height / 2 };
+    makeBadge(comment, num, last.right + 2, last.top + last.height / 2, false);
   }
 
-  /**
-   * Fala wokół zaznaczonego znacznika. Rysowana jako osobny element w środku
-   * znacznika – powiększenie znacznika (scale) nie wpływa na jej kształt.
-   */
-  function addHalo(x, y, resolved) {
-    var halo = doc.createElement('dra-halo');
-    halo.className = 'dra-halo' + (resolved ? ' dra-resolved' : '');
-    halo.style.left = x + 'px';
-    halo.style.top = y + 'px';
-    hlLayer.appendChild(halo);
-  }
-
+  // Podświetlenia rysujemy od nowa; znaczniki zostają (zob. marker()).
   function clearLayers() {
-    while (pinLayer.firstChild) pinLayer.removeChild(pinLayer.firstChild);
     while (hlLayer.firstChild) hlLayer.removeChild(hlLayer.firstChild);
   }
 
@@ -914,7 +922,6 @@
 
     var missing = [];
     var concealed = [];
-    var haloPoint = null;
 
     for (var i = 0; i < state.comments.length; i++) {
       var c = state.comments[i];
@@ -923,31 +930,24 @@
       if (c.type === 'pin') {
         var pt = pinViewportPoint(c.anchor);
         if (pt.concealed) concealed.push(c.id);
-        pinLayer.appendChild(makePin(c, i + 1, pt.x, pt.y, false, pt.concealed));
-        if (c.id === state.selectedId) haloPoint = { x: pt.x, y: pt.y, resolved: !!c.resolved };
+        makePin(c, i + 1, pt.x, pt.y, false, pt.concealed);
       } else {
         var marks = marksFor(c.anchor);
         if (!marks || (!marks.rects.length && !marks.point)) { missing.push(c.id); continue; }
-        var badgePoint;
         if (marks.rects.length) {
-          badgePoint = appendHighlight(c, marks.rects, i + 1, false);
+          appendHighlight(c, marks.rects, i + 1, false);
         } else {
           concealed.push(c.id);
-          badgePoint = appendConcealedBadge(c, i + 1, marks.point);
-        }
-        if (c.id === state.selectedId && badgePoint) {
-          haloPoint = { x: badgePoint.x, y: badgePoint.y, resolved: !!c.resolved };
+          appendConcealedBadge(c, i + 1, marks.point);
         }
       }
     }
-
-    if (haloPoint) addHalo(haloPoint.x, haloPoint.y, haloPoint.resolved);
 
     var p = state.pending;
     if (p) {
       if (p.kind === 'pin' && p.anchor) {
         var ppt = pinViewportPoint(p.anchor);
-        pinLayer.appendChild(makePin({}, '✎', ppt.x, ppt.y, true));
+        makePin({}, '✎', ppt.x, ppt.y, true);
       } else if (p.range) {
         var pm = marksForRange(p.range);
         if (pm.rects.length) appendHighlight({}, pm.rects, null, true);
@@ -955,6 +955,7 @@
     }
 
     drawSelectedOutline();
+    sweepMarkers();
     visCache = null;
 
     var key = missing.join(',') + '|' + concealed.join(',');

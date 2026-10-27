@@ -60,6 +60,9 @@ let missingIds = new Set();
 let concealedIds = new Set(); // miejsca, które są teraz ukryte (akordeon, zakładka, slajd)
 let hideResolved = localStorage.getItem(FILTER_KEY) === '1';
 let toastTimer = null;
+let replyOpenId = null;   // komentarz, na który właśnie odpowiadamy
+let replyDraft = { author: '', text: '' }; // treść formularza odpowiedzi (przetrwa przebudowę listy)
+let replyFocusPending = false; // ustaw fokus w formularzu odpowiedzi po jego otwarciu
 
 // Połączenie z warstwą adnotacji w ramce.
 let allowedOrigins = [location.origin]; // skąd przyjmujemy wiadomości ramki
@@ -180,19 +183,6 @@ function commentsForPage() {
   return comments.filter(onCurrentPage);
 }
 
-/** Numer komentarza w obrębie jego własnej strony (zgodny z numerem pinezki). */
-function commentNumber(comment) {
-  const samePage = onCurrentPage(comment) ? onCurrentPage : (c) => c.page === comment.page;
-  let n = 0;
-  for (const c of comments) {
-    if (samePage(c)) {
-      n++;
-      if (c.id === comment.id) return n;
-    }
-  }
-  return 0;
-}
-
 function pageUrl(page) {
   if (isLive()) {
     // Zabezpieczenie przed kluczem wskazującym inny host (np. "//evil.com"):
@@ -257,6 +247,12 @@ function relTime(ts) {
 /* ----------------------------- panel komentarzy --------------------------- */
 
 function renderList() {
+  // Lista bywa przebudowywana w trakcie pisania odpowiedzi (np. gdy podgląd
+  // zgłosi zmianę) – zapamiętujemy, które pole formularza miało fokus.
+  const focused = document.activeElement;
+  const focusField = focused && listEl.contains(focused) && focused.dataset ? focused.dataset.replyField : null;
+  const caret = focusField && typeof focused.selectionStart === 'number' ? focused.selectionStart : null;
+
   listEl.textContent = '';
 
   const visibleComments = hideResolved ? comments.filter((c) => !c.resolved) : comments;
@@ -290,11 +286,11 @@ function renderList() {
     const head = document.createElement('div');
     head.className = 'comment-head';
 
+    // Znacznik stanu: kropka (otwarty) albo ✓ (rozwiązany) – bez numeru,
+    // który przy setkach komentarzy rozpychałby nagłówek.
     const num = document.createElement('span');
     num.className = 'num';
-    const numText = document.createElement('span');
-    numText.textContent = String(commentNumber(comment));
-    num.appendChild(numText);
+    num.setAttribute('aria-hidden', 'true');
 
     const author = document.createElement('span');
     author.className = 'author';
@@ -340,8 +336,19 @@ function renderList() {
       li.appendChild(note);
     }
 
+    const replies = Array.isArray(comment.replies) ? comment.replies : [];
+    if (replies.length) li.appendChild(renderReplies(comment, replies));
+
     const foot = document.createElement('div');
     foot.className = 'comment-foot';
+
+    const replyBtn = document.createElement('button');
+    replyBtn.type = 'button';
+    replyBtn.textContent = 'Odpowiedz';
+    replyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openReply(comment.id);
+    });
 
     const resolveBtn = document.createElement('button');
     resolveBtn.type = 'button';
@@ -399,8 +406,10 @@ function renderList() {
       copyText(comment.text, 'Treść komentarza skopiowana');
     });
 
-    foot.append(resolveBtn, delBtn, copyBtn);
+    foot.append(replyBtn, resolveBtn, delBtn, copyBtn);
     li.appendChild(foot);
+
+    if (replyOpenId === comment.id) li.appendChild(renderReplyForm(comment, focusField, caret));
 
     li.addEventListener('click', () => {
       // Kliknięcie kończące zaznaczanie tekstu komentarza nie wybiera wpisu –
@@ -412,6 +421,163 @@ function renderList() {
 
     listEl.appendChild(li);
   });
+}
+
+/* -------------------------------- odpowiedzi ------------------------------- */
+
+function renderReplies(comment, replies) {
+  const list = document.createElement('ul');
+  list.className = 'replies';
+  for (const reply of replies) {
+    const item = document.createElement('li');
+    item.className = 'reply';
+
+    const head = document.createElement('div');
+    head.className = 'reply-head';
+    const author = document.createElement('span');
+    author.className = 'author';
+    author.textContent = reply.author;
+    const time = document.createElement('time');
+    time.className = 'time';
+    time.textContent = relTime(reply.createdAt);
+    time.title = new Date(reply.createdAt).toLocaleString('pl-PL');
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'reply-del';
+    del.textContent = 'Usuń';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await drConfirm({
+        title: 'Usunąć odpowiedź?',
+        message: 'Tej operacji nie można cofnąć.',
+        confirmText: 'Usuń odpowiedź',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const data = await api(`/api/projects/${projectId}/comments/${comment.id}/replies/${reply.id}`, { method: 'DELETE' });
+        replaceComment(data.comment);
+        renderList();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+    head.append(author, time, del);
+
+    const body = document.createElement('div');
+    body.className = 'reply-body';
+    body.textContent = reply.text;
+
+    item.append(head, body);
+    list.appendChild(item);
+  }
+  return list;
+}
+
+function replaceComment(updated) {
+  const idx = comments.findIndex((c) => c.id === updated.id);
+  if (idx !== -1) comments[idx] = updated;
+}
+
+function openReply(id) {
+  if (replyOpenId !== id) replyDraft = { author: '', text: '' };
+  replyOpenId = id;
+  replyFocusPending = true;
+  renderList();
+}
+
+function closeReply() {
+  replyOpenId = null;
+  replyDraft = { author: '', text: '' };
+  renderList();
+}
+
+/** Formularz odpowiedzi pod komentarzem. Imię zapamiętane w przeglądarce. */
+function renderReplyForm(comment, focusField, caret) {
+  const form = document.createElement('form');
+  form.className = 'reply-form';
+  form.autocomplete = 'off';
+  // Kliknięcia w formularzu nie wybierają komentarza.
+  form.addEventListener('click', (e) => e.stopPropagation());
+
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.maxLength = 60;
+  name.placeholder = 'Twoje imię';
+  name.dataset.replyField = 'author';
+  name.value = replyDraft.author || savedName;
+  name.addEventListener('input', () => { replyDraft.author = name.value; });
+
+  const text = document.createElement('textarea');
+  text.rows = 2;
+  text.maxLength = 4000;
+  text.placeholder = 'Napisz odpowiedź…';
+  text.dataset.replyField = 'text';
+  text.value = replyDraft.text;
+  text.addEventListener('input', () => { replyDraft.text = text.value; });
+
+  const error = document.createElement('p');
+  error.className = 'error';
+  error.hidden = true;
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn ghost small';
+  cancel.textContent = 'Anuluj';
+  cancel.addEventListener('click', closeReply);
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'btn primary small';
+  submit.textContent = 'Odpowiedz';
+  actions.append(cancel, submit);
+
+  form.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeReply(); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const author = name.value.trim();
+    const body = text.value.trim();
+    if (!author) { error.hidden = false; error.textContent = 'Podaj nazwę.'; name.focus(); return; }
+    if (!body) { error.hidden = false; error.textContent = 'Wpisz treść odpowiedzi.'; text.focus(); return; }
+    submit.disabled = true;
+    try {
+      const data = await api(`/api/projects/${projectId}/comments/${comment.id}/replies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author, text: body }),
+      });
+      localStorage.setItem(NAME_KEY, author);
+      replaceComment(data.comment);
+      replyOpenId = null;
+      replyDraft = { author: '', text: '' };
+      renderList();
+      toast('Odpowiedź dodana');
+    } catch (err) {
+      error.hidden = false;
+      error.textContent = err.message;
+      submit.disabled = false;
+    }
+  });
+
+  form.append(name, text, error, actions);
+
+  // Fokus tylko po otwarciu formularza albo gdy miał go przed przebudową
+  // listy – inaczej przebudowa zabierałaby go z innych pól.
+  if (focusField || replyFocusPending) {
+    const target = focusField === 'author' || (!focusField && !name.value) ? name : text;
+    replyFocusPending = false;
+    setTimeout(() => {
+      target.focus();
+      if (caret != null && typeof target.setSelectionRange === 'function') target.setSelectionRange(caret, caret);
+    }, 0);
+  }
+  return form;
 }
 
 function selectComment(id, scrollPage) {

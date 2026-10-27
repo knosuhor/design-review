@@ -778,6 +778,33 @@ app.delete('/api/projects/:id/comments/:commentId', requireProjectAccessApi, asy
   res.json({ ok: true });
 });
 
+/* ------------------------------ API: odpowiedzi --------------------------- */
+
+/** Odpowiedź na komentarz – tak jak komentarze: bez konta, wystarczy imię. */
+app.post('/api/projects/:id/comments/:commentId/replies', requireProjectAccessApi, async (req, res) => {
+  const project = req.project;
+  const body = req.body || {};
+  const author = clampStr(body.author, 60);
+  const text = clampStr(body.text, 4000);
+  if (!author) return res.status(400).json({ error: 'Podaj nazwę.' });
+  if (!text) return res.status(400).json({ error: 'Treść odpowiedzi nie może być pusta.' });
+
+  const reply = { id: store.newId(), author, text, createdAt: Date.now() };
+  // Odpowiedzi właściciela (zalogowanego uid-em) nie wyzwalają powiadomień.
+  if (auth.isAuthed(req)) reply.byOwner = true;
+  const comment = await store.addReply(project.id, req.params.commentId, reply);
+  if (!comment) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
+  notify.commentAdded(project.id);
+  res.status(201).json({ reply, comment: commentsWithPage([comment], project)[0] });
+});
+
+app.delete('/api/projects/:id/comments/:commentId/replies/:replyId', requireProjectAccessApi, async (req, res) => {
+  const comment = await store.deleteReply(req.project.id, req.params.commentId, req.params.replyId);
+  if (comment === null) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
+  if (comment === false) return res.status(404).json({ error: 'Odpowiedź nie istnieje.' });
+  res.json({ ok: true, comment: commentsWithPage([comment], req.project)[0] });
+});
+
 /* ------------------------- serwowanie plików strony ----------------------- */
 
 async function resolveSitePath(root, rel) {

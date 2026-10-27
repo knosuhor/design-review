@@ -59,15 +59,17 @@ Wymagany jest Node.js 20 lub nowszy.
 
 ## Powiadomienia mailowe
 
-Gdy recenzent doda komentarz, administrator dostaje maila. Komentarze są
+Gdy recenzent doda komentarz albo odpowiedź, administrator dostaje maila. Wpisy są
 **zbierane per projekt**: mail wychodzi, gdy przez **4 minuty** nie pojawił się
 nowy komentarz, ale nie później niż **15 minut** od pierwszego niewysłanego.
 Kilkanaście uwag z jednej sesji recenzji to więc jeden mail, a nie kilkanaście.
 
 - W mailu: nazwa projektu, a przy każdym komentarzu autor, podstrona, treść,
   zaznaczony fragment i link **„Pokaż komentarz”** (`/v/<id>?c=<komentarz>`) –
-  otwiera właściwą podstronę i wyróżnia komentarz.
-- Komentarze dodane przez właściciela (zalogowanego uid-em) nie wyzwalają maila.
+  otwiera właściwą podstronę i wyróżnia komentarz. Przy odpowiedzi: kto
+  odpowiada, treść odpowiedzi i komentarz, którego dotyczy.
+- Komentarze i odpowiedzi dodane przez właściciela (zalogowanego uid-em) nie
+  wyzwalają maila.
 - Maksymalnie 20 maili na godzinę (komentowanie jest publiczne – limit chroni
   skrzynkę). Nieudana wysyłka jest ponawiana po 5 minutach.
 - Stan („do którego komentarza już powiadomiono”) jest zapisany przy projekcie,
@@ -281,8 +283,10 @@ np. po przeniesieniu ze stagingu na produkcję:
   i od razu podświetla właściwy komentarz,
 - kliknięcie wpisu na liście wyróżnia odpowiadający mu komentarz w podglądzie:
   pinezka (razem z numerem) jest powiększona do 120% i przybiera wyraźny
-  **różowy kolor `#ee3a70`** (ten sam, co emoji 📌 w pasku), a wokół niej
-  rozchodzi się fala w tym kolorze. Przy komentarzach przypiętych do elementu
+  **różowy kolor `#ee3a70`** (ten sam, co emoji 📌 w pasku). Po najechaniu
+  kursorem pinezka tylko się powiększa (bez pulsowania – znaczniki nie są
+  tworzone od nowa przy każdym przerysowaniu). Numer na pinezce może mieć
+  dowolną liczbę cyfr – pinezka się wydłuża. Przy komentarzach przypiętych do elementu
   dodatkowo rysowana jest **obwódka wokół tego elementu** — od razu widać,
   czego dotyczy uwaga. Wyróżnienie pozostaje widoczne aż do wybrania innego
   komentarza, a widok przewija się do właściwego miejsca,
@@ -290,7 +294,14 @@ np. po przeniesieniu ze stagingu na produkcję:
   odpowiedni wpis na liście,
 - **⬇ ZIP** – pobranie plików projektu jako archiwum ZIP (bez komentarzy;
   to dokładnie te pliki, które znalazły się w przesłanym archiwum),
-- komentarze można **oznaczyć jako rozwiązany** i **usunąć**,
+- na liście komentarzy kropka oznacza komentarz otwarty, a ✓ rozwiązany;
+  zaznaczony fragment tekstu (cytat) ma najwyżej dwie linie i kończy się
+  wielokropkiem,
+- **Odpowiedz** pod komentarzem otwiera formularz odpowiedzi (imię jak przy
+  komentarzu – zapamiętywane w przeglądarce; Ctrl/Cmd+Enter wysyła, Escape
+  zamyka). Odpowiedzi wyświetlają się pod komentarzem, w kolejności dodania;
+  każdą można usunąć,
+- komentarze można **oznaczyć jako rozwiązany** i **usunąć** (razem z odpowiedziami),
 - przycisk **Ukryj rozwiązane** ukrywa komentarze oznaczone jako rozwiązane —
   zarówno na liście, jak i w podglądzie strony. Wybór jest zapamiętywany
   w przeglądarce.
@@ -423,6 +434,8 @@ sample/landing.zip     przykładowa strona do testów
 | `POST` | `/api/projects/:id/comments` | publiczny\* | dodanie komentarza |
 | `PATCH` | `/api/projects/:id/comments/:commentId` | publiczny\* | zmiana treści / statusu „rozwiązany” |
 | `DELETE` | `/api/projects/:id/comments/:commentId` | publiczny\* | usunięcie komentarza |
+| `POST` | `/api/projects/:id/comments/:commentId/replies` | publiczny\* | odpowiedź na komentarz (`{ "author": "…", "text": "…" }`) |
+| `DELETE` | `/api/projects/:id/comments/:commentId/replies/:replyId` | publiczny\* | usunięcie odpowiedzi |
 | `GET` | `/v/:id` | publiczny\* | widok recenzji (`?c=<id komentarza>` – otwiera jego podstronę i wyróżnia go) |
 | `GET` | `/p/:id/...` | publiczny\* | pliki wgranej strony |
 
@@ -496,7 +509,7 @@ plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
 (walidacja adresu, skrypt do wklejenia bez wersji, klucze podstron, ID wpisu,
-odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, zmiana nazwy projektu, nagłówki cache warstwy
+odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, zmiana nazwy projektu, odpowiedzi na komentarze, nagłówki cache warstwy
 adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).

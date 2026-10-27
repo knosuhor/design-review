@@ -677,6 +677,38 @@ async function main() {
   check('nazwa przycinana do 120 znaków',
     (await (await rename(project.id, 'a'.repeat(300))).json()).project.name.length === 120);
 
+  console.log('\n5g. Odpowiedzi na komentarze');
+  const parent = await (await realFetch(`${BASE}/api/projects/${project.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author: 'Anna', text: 'Komentarz z odpowiedziami', type: 'pin', page: 'index.html', anchor: { x: 5, y: 5 } }),
+  })).json();
+  const reply = (commentId, body, useFetch) => (useFetch || realFetch)(
+    `${BASE}/api/projects/${project.id}/comments/${commentId}/replies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const r1Res = await reply(parent.comment.id, { author: 'Bartek', text: 'Zgadzam się' });
+  const r1 = await r1Res.json();
+  check('odpowiedź bez logowania (201)', r1Res.status === 201, JSON.stringify(r1));
+  check('odpowiedź zapisana przy komentarzu',
+    r1.comment && Array.isArray(r1.comment.replies) && r1.comment.replies.length === 1
+      && r1.comment.replies[0].text === 'Zgadzam się' && !r1.comment.replies[0].byOwner);
+  const r2 = await (await reply(parent.comment.id, { author: 'Właściciel', text: 'Poprawione' }, fetch)).json();
+  check('odpowiedź właściciela oznaczona (bez powiadomienia)', r2.reply && r2.reply.byOwner === true);
+  check('pusta odpowiedź odrzucona (400)', (await reply(parent.comment.id, { author: 'X', text: '  ' })).status === 400);
+  check('odpowiedź bez imienia odrzucona (400)', (await reply(parent.comment.id, { author: '', text: 'Treść' })).status === 400);
+  check('odpowiedź do nieistniejącego komentarza (404)', (await reply('brak', { author: 'X', text: 'Y' })).status === 404);
+  const withReplies = (await (await fetch(`${BASE}/api/projects/${project.id}/comments`)).json()).comments
+    .find((c) => c.id === parent.comment.id);
+  check('lista komentarzy zawiera odpowiedzi w kolejności', withReplies && withReplies.replies.map((r) => r.text).join('|') === 'Zgadzam się|Poprawione');
+  const delReply = await realFetch(`${BASE}/api/projects/${project.id}/comments/${parent.comment.id}/replies/${r1.reply.id}`, { method: 'DELETE' });
+  const delReplyJson = await delReply.json();
+  check('usunięcie odpowiedzi (200)', delReply.status === 200 && delReplyJson.comment.replies.length === 1);
+  const delAgain = await realFetch(`${BASE}/api/projects/${project.id}/comments/${parent.comment.id}/replies/${r1.reply.id}`, { method: 'DELETE' });
+  check('usunięta odpowiedź już nie istnieje (404)', delAgain.status === 404);
+
   await notificationTests();
 
   console.log('\n6. Sprzątanie');
@@ -762,13 +794,32 @@ async function notificationTests() {
   await sleep(quiet + 1000);
   check('same komentarze właściciela nie dają maila', mailsFor(name).length === 1, String(mailsFor(name).length));
 
+  // Odpowiedzi recenzentów też trafiają do maila, odpowiedzi właściciela nie.
+  const before = mailsFor(name).length;
+  const addReply = (text, asOwner) => (asOwner ? fetch : realFetch)(`${BASE}/api/projects/${pid}/comments/${c1.comment.id}/replies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author: 'Recenzent', text }),
+  });
+  await addReply('Odpowiedź właściciela', true);
+  await addReply('Odpowiedź recenzenta');
+  const withReply = await waitForMails(name, before + 1, quiet + 3000);
+  const replyMail = withReply[before] || {};
+  check('odpowiedź recenzenta wyzwala mail', withReply.length === before + 1, String(withReply.length));
+  check('temat mówi o odpowiedzi', /1 nowa odpowiedź – /.test(replyMail.subject || ''), replyMail.subject);
+  check('mail podaje odpowiedź i komentarz, którego dotyczy',
+    /Odpowiedź recenzenta/.test(replyMail.text || '') && /odpowiada na komentarz/.test(replyMail.text || '')
+      && /Pierwsza uwaga/.test(replyMail.text || ''));
+  check('odpowiedź właściciela pominięta', !/Odpowiedź właściciela/.test(replyMail.text || ''));
+
   // Ciągłe komentowanie (krócej niż okno ciszy) – mail i tak wychodzi po czasie maksymalnym.
   const start = Date.now();
+  const mailsBeforeSeries = mailsFor(name).length;
   let sentWhileActive = false;
   while (Date.now() - start < max + quiet) {
     await addComment('Seria ' + (Date.now() - start));
     await sleep(quiet / 2);
-    if (mailsFor(name).length > 1) { sentWhileActive = true; break; }
+    if (mailsFor(name).length > mailsBeforeSeries) { sentWhileActive = true; break; }
   }
   check('przy ciągłym komentowaniu mail wychodzi po czasie maksymalnym', sentWhileActive);
 

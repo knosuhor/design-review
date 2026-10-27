@@ -695,17 +695,28 @@ body.viewer { overflow: hidden; }
   flex: none;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  font-size: .72rem;
-  font-weight: 700;
   display: grid;
   place-items: center;
 }
-.comment.resolved .num { background: var(--muted); }
-.comment.resolved .num::after { content: "✓"; font-size: .7rem; }
-.comment.resolved .num span { display: none; }
+/* Otwarty komentarz – kropka; rozwiązany – ✓ w szarym kółku. */
+.num::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.comment.resolved .num::before {
+  content: "✓";
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--muted);
+  color: #fff;
+  font-size: .7rem;
+  font-weight: 700;
+}
 .author { font-weight: 600; font-size: .88rem; }
 .time { color: var(--muted); font-size: .76rem; margin-left: auto; white-space: nowrap; }
 /* Nazwa podstrony przy komentarzu dotyczącym innego pliku. */
@@ -736,7 +747,11 @@ body.viewer { overflow: hidden; }
   color: var(--muted);
   border-left: 2px solid var(--border-strong);
   padding-left: .5rem;
-  max-height: 3.6em;
+  /* Dwie linie, a dalej wielokropek zamiast uciętego wiersza. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
 }
 .comment-foot { display: flex; gap: .3rem; margin: .35rem 0 0 1.85rem; }
@@ -751,6 +766,49 @@ body.viewer { overflow: hidden; }
 }
 .comment-foot button:hover { color: var(--text); text-decoration: underline; }
 .comment-foot button.del:hover { color: var(--danger); }
+/* Odpowiedzi – wcięte pod komentarzem, z linią po lewej. */
+.replies {
+  list-style: none;
+  margin: .5rem 0 0 1.85rem;
+  padding: 0 0 0 .65rem;
+  border-left: 2px solid var(--border-strong);
+  display: grid;
+  gap: .45rem;
+}
+.reply-head { display: flex; align-items: center; gap: .45rem; }
+.reply-head .author { font-size: .82rem; }
+.reply-body {
+  font-size: .86rem;
+  margin-top: .1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  user-select: text;
+}
+.reply-del {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: .72rem;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.reply:hover .reply-del, .reply-del:focus-visible { opacity: 1; }
+.reply-del:hover { color: var(--danger); text-decoration: underline; }
+.reply-form {
+  margin: .5rem 0 0 1.85rem;
+  display: grid;
+  gap: .4rem;
+  cursor: default;
+}
+.reply-form input, .reply-form textarea { font-size: .86rem; padding: .4rem .55rem; background: var(--panel); }
+.reply-form textarea { min-height: 56px; }
+.reply-form .error { margin: 0; font-size: .78rem; }
+.reply-form .actions { display: flex; gap: .4rem; justify-content: flex-end; }
+
 /* Kopiowanie treści – mały przycisk w prawym dolnym rogu wpisu. */
 .comment-foot button.copy {
   margin-left: auto;
