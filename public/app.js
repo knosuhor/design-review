@@ -170,15 +170,26 @@ function renderProjects(projects) {
 
     const name = document.createElement('div');
     name.className = 'pi-name';
-    name.textContent = project.name;
-    name.title = project.name;
+    const nameText = document.createElement('span');
+    nameText.className = 'pi-name-text';
+    nameText.textContent = project.name;
+    nameText.title = project.name;
+    name.appendChild(nameText);
     if (project.locked) {
       const lock = document.createElement('span');
       lock.className = 'pi-lock';
       lock.textContent = '🔒';
       lock.title = 'Strona zabezpieczona hasłem';
-      name.append(' ', lock);
+      name.appendChild(lock);
     }
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.className = 'pi-rename';
+    renameBtn.textContent = '✎';
+    renameBtn.title = 'Zmień nazwę';
+    renameBtn.setAttribute('aria-label', 'Zmień nazwę projektu');
+    renameBtn.addEventListener('click', () => startRename(project, name, nameText));
+    name.appendChild(renameBtn);
 
     const meta = document.createElement('div');
     meta.className = 'pi-meta';
@@ -336,6 +347,58 @@ function renderProjects(projects) {
     item.append(thumb, main, actions);
     listEl.appendChild(item);
   }
+}
+
+/**
+ * Zmiana nazwy w miejscu: nazwa zamienia się w pole tekstowe.
+ * Enter albo kliknięcie obok zapisuje, Escape anuluje.
+ */
+function startRename(project, nameEl, nameText) {
+  if (nameEl.classList.contains('editing')) return;
+  nameEl.classList.add('editing');
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'pi-name-input';
+  input.maxLength = 120;
+  input.value = project.name;
+  input.setAttribute('aria-label', 'Nazwa projektu');
+  nameEl.insertBefore(input, nameText);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (save && value && value !== project.name) {
+      input.disabled = true;
+      try {
+        const data = await api(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: value }),
+        });
+        project.name = data.project.name;
+        nameText.textContent = project.name;
+        nameText.title = project.name;
+        toast('Nazwa zmieniona');
+      } catch (err) {
+        toast(err.message, true);
+      }
+    } else if (save && !value) {
+      toast('Nazwa nie może być pusta', true);
+    }
+    input.remove();
+    nameEl.classList.remove('editing');
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
 }
 
 async function loadProjects() {

@@ -657,6 +657,26 @@ async function main() {
   const liveDel = await fetch(`${BASE}/api/projects/${live.id}`, { method: 'DELETE' });
   check('usunięcie strony na żywo', liveDel.status === 200, String(liveDel.status));
 
+  console.log('\n5f. Zmiana nazwy projektu');
+  const rename = (id, name, useFetch) => (useFetch || fetch)(`${BASE}/api/projects/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  check('zmiana nazwy bez logowania zablokowana (401)', (await rename(project.id, 'X', realFetch)).status === 401);
+  check('pusta nazwa odrzucona (400)', (await rename(project.id, '   ')).status === 400);
+  check('nieistniejący projekt (404)', (await rename('brak-takiego', 'X')).status === 404);
+  const renamedRes = await rename(project.id, '  Nowa nazwa  ');
+  const renamedJson = await renamedRes.json();
+  check('zmiana nazwy (200, przycięte spacje)',
+    renamedRes.status === 200 && renamedJson.project && renamedJson.project.name === 'Nowa nazwa',
+    JSON.stringify(renamedJson));
+  const listAfterRename = await (await fetch(`${BASE}/api/projects`)).json();
+  check('nowa nazwa na liście projektów',
+    listAfterRename.projects.some((p) => p.id === project.id && p.name === 'Nowa nazwa'));
+  check('nazwa przycinana do 120 znaków',
+    (await (await rename(project.id, 'a'.repeat(300))).json()).project.name.length === 120);
+
   await notificationTests();
 
   console.log('\n6. Sprzątanie');

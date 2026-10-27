@@ -144,6 +144,8 @@ i `NOTIFY_TICK_MS` (zob. sekcja **Testy**).
 
 - w pasku: **🔑 Kopiuj uid** i **Wyloguj**,
 - lista przesłanych stron (nazwa, data, rozmiar, liczba plików, wykryty plik startowy),
+- **✎** za nazwą projektu – zmiana nazwy w miejscu (Enter lub kliknięcie obok
+  zapisuje, Escape anuluje); link do recenzji i komentarze się nie zmieniają,
 - przeciągnij i upuść plik `.zip` albo wybierz go z dysku (limit 50 MB),
 - **Kopiuj link** – skopiowanie adresu do udostępnienia recenzentowi,
 - akcje przy projekcie to ikony (oszczędzają miejsce): **👁** widok recenzji,
@@ -410,6 +412,7 @@ sample/landing.zip     przykładowa strona do testów
 | `POST` | `/api/projects/url` | **tylko zalogowany** | strona na żywo: `{ "url": "https://…", "name": "…" }` (nazwa opcjonalna); zwraca projekt i `snippet` |
 | `POST` | `/api/projects/:id/url` | **tylko zalogowany** | zmiana adresu strony na żywo (`{ "url": "https://…" }`); link, hasło i komentarze bez zmian; zwraca `originChanged` i `snippet` |
 | `POST` | `/api/projects/:id/replace` | **tylko zalogowany** | podmiana plików istniejącej strony (`multipart/form-data`: `file`); link, hasło i komentarze bez zmian; nie dotyczy stron na żywo |
+| `PATCH` | `/api/projects/:id` | **tylko zalogowany** | zmiana nazwy projektu (`{ "name": "…" }`, maks. 120 znaków) |
 | `DELETE` | `/api/projects/:id` | **tylko zalogowany** | usunięcie strony wraz z komentarzami |
 | `POST` | `/api/projects/:id/password` | **tylko zalogowany** | ustawienie (`{ "password": "…" }`) lub usunięcie (`""`) hasła strony |
 | `GET` | `/api/projects/:id/access` | publiczny | `{ name, locked, unlocked }` – stan dostępu do strony (dla ekranu hasła) |
@@ -493,7 +496,7 @@ plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
 (walidacja adresu, skrypt do wklejenia bez wersji, klucze podstron, ID wpisu,
-odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, nagłówki cache warstwy
+odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, zmiana nazwy projektu, nagłówki cache warstwy
 adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).

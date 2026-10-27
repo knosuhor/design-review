@@ -339,9 +339,39 @@ main.wrap { padding: 2rem 0 4rem; }
 .pi-main { min-width: 0; }
 .pi-name {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  min-width: 0;
+}
+.pi-name-text {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Zmiana nazwy – mały przycisk jak kopiowanie treści komentarza. */
+.pi-rename {
+  flex: none;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-weight: 400;
+  font-size: .9rem;
+  line-height: 1;
+  color: var(--muted);
+  padding: .1rem .3rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pi-rename:hover { color: var(--text); background: var(--border); }
+.pi-name.editing .pi-name-text,
+.pi-name.editing .pi-rename { display: none; }
+.pi-name-input {
+  font: inherit;
+  font-weight: 600;
+  padding: .15rem .4rem;
+  max-width: 420px;
 }
 .pi-meta {
   color: var(--muted);

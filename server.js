@@ -571,6 +571,16 @@ app.post('/api/projects/:id/replace', auth.requireAuthApi, upload.single('file')
   }
 });
 
+/** Zmiana nazwy projektu (tylko właściciel). */
+app.patch('/api/projects/:id', auth.requireAuthApi, async (req, res) => {
+  const project = store.getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Projekt nie istnieje.' });
+  const name = clampStr((req.body || {}).name, 120).replace(/[\u0000-\u001f]/g, '').trim();
+  if (!name) return res.status(400).json({ error: 'Nazwa nie może być pusta.' });
+  const updated = await store.updateProject(project.id, { name });
+  res.json({ project: projectDto(updated) });
+});
+
 app.delete('/api/projects/:id', auth.requireAuthApi, async (req, res) => {
   const removed = await store.removeProject(req.params.id);
   if (!removed) return res.status(404).json({ error: 'Projekt nie istnieje.' });
