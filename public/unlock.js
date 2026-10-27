@@ -32,7 +32,7 @@ loginLink.href = '/login?next=' + encodeURIComponent(targetUrl());
 
 (async () => {
   try {
-    const res = await fetch(apiPath + '/access');
+    const res = await drFetch(apiPath + '/access');
     if (!res.ok) throw new Error(res.status === 404 ? 'Nie znaleziono projektu.' : 'Nie udało się wczytać projektu.');
     const data = await res.json();
     nameEl.textContent = data.name;
@@ -65,7 +65,7 @@ form.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   errorEl.hidden = true;
   try {
-    const res = await fetch(apiPath + '/unlock', {
+    const res = await drFetch(apiPath + '/unlock', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password, next: targetUrl() }),

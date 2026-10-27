@@ -100,7 +100,9 @@ Firmowy Gmail (Google Workspace):
    SMTP_PASS='abcd efgh ijkl mnop' PUBLIC_URL=https://review.twojadomena.pl npm start
    ```
 4. W panelu kliknij **✉️ Testowy mail** (przycisk widać tylko, gdy powiadomienia
-   są skonfigurowane) – błąd logowania SMTP pojawi się w komunikacie.
+   są skonfigurowane). Przy błędzie komunikat podpowie przyczynę: odrzucone
+   logowanie (`SMTP_USER` / hasło aplikacji) albo brak połączenia z serwerem
+   poczty (adres, port, ruch wychodzący) – po najwyżej kilkunastu sekundach.
 
 Gmail wysyła maile jako `SMTP_USER`; inny `MAIL_FROM` zadziała tylko, jeśli to
 alias dodany na tym koncie. Bez `PUBLIC_URL` linki w mailach używają adresu, pod
@@ -570,6 +572,11 @@ MENTION_DOMAINS=example.com MAIL_TRANSPORT=log NOTIFY_EMAIL=test@example.com NOT
 ```
 
 ## Bezpieczeństwo i ograniczenia
+
+- Błędy pokazywane są po polsku: brak połączenia z serwerem (np. podczas
+  restartu) zamiast przeglądarkowego „Failed to fetch”, a nieoczekiwany błąd
+  serwera jako ogólny komunikat – szczegóły trafiają tylko do logu serwera.
+  Błąd w obsłudze żądania nie zatrzymuje już całego serwera.
 
 - Strona główna i operacje na projektach są chronione uid-em, ale **dodawanie,
   zmiana i usuwanie komentarzy jest publiczne** — każdy, kto zna link do

@@ -83,7 +83,7 @@ function requireLogin() {
 }
 
 async function api(path, options) {
-  const res = await fetch(path, options);
+  const res = await drFetch(path, options);
   let data = {};
   try { data = await res.json(); } catch { /* brak JSON */ }
   if (res.status === 401) return requireLogin();
@@ -591,7 +591,7 @@ urlForm.addEventListener('submit', async (e) => {
 
 async function loadSession() {
   try {
-    const res = await fetch('/api/session');
+    const res = await drFetch('/api/session');
     const data = await res.json();
     if (!data.authed) return requireLogin();
     currentUid = data.uid || '';
@@ -634,7 +634,7 @@ uidBtn.addEventListener('click', () => {
 logoutBtn.addEventListener('click', async () => {
   logoutBtn.disabled = true;
   try {
-    await fetch('/api/logout', { method: 'POST' });
+    await drFetch('/api/logout', { method: 'POST' });
   } catch {
     /* i tak wracamy na ekran logowania */
   }

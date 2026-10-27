@@ -145,7 +145,7 @@ function pageLabel(page) {
 }
 
 async function api(path, options) {
-  const res = await fetch(path, options);
+  const res = await drFetch(path, options);
   let data = {};
   try { data = await res.json(); } catch { /* brak JSON */ }
   if (res.status === 401 && data.unlock) {
@@ -565,7 +565,7 @@ unsubscribeBtn.addEventListener('click', async () => {
   });
   if (!ok) return;
   try {
-    const res = await fetch('/unsubscribe/' + encodeURIComponent(token), {
+    const res = await drFetch('/unsubscribe/' + encodeURIComponent(token), {
       method: 'POST',
       headers: { Accept: 'application/json' },
     });
@@ -1044,7 +1044,7 @@ iframe.addEventListener('load', () => {
  */
 async function loadSession() {
   try {
-    const res = await fetch('/api/session');
+    const res = await drFetch('/api/session');
     const data = await res.json();
     isOwner = Boolean(data.authed);
     applyEmailVisibility();

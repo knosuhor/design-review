@@ -59,7 +59,7 @@ form.addEventListener('submit', async (e) => {
   submitBtn.textContent = 'Sprawdzam…';
 
   try {
-    const res = await fetch('/api/login', {
+    const res = await drFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uid, next: nextUrl() }),

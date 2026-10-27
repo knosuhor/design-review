@@ -52,6 +52,28 @@ function annotator() {
 
 const app = express();
 app.disable('x-powered-by');
+
+/*
+ * Express 4 nie przechwytuje błędów z tras async – wyjątek kończyłby proces
+ * serwera, a przeglądarka dostawałaby tylko „Failed to fetch”. Każdą trasę
+ * owijamy tak, żeby błąd trafił do wspólnej obsługi błędów (na końcu pliku).
+ */
+for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
+  const original = app[method].bind(app);
+  app[method] = (route, ...handlers) => {
+    if (!handlers.length) return original(route); // app.get('ustawienie')
+    return original(route, ...handlers.map((handler) => (typeof handler === 'function' && handler.length < 4
+      ? (req, res, next) => {
+        try {
+          const result = handler(req, res, next);
+          if (result && typeof result.catch === 'function') result.catch(next);
+        } catch (err) {
+          next(err);
+        }
+      }
+      : handler)));
+  };
+}
 app.use(express.json({ limit: '1mb' }));
 
 // Adres do linków w mailach: PUBLIC_URL, a bez niego adres, pod którym
@@ -312,7 +334,7 @@ const upload = multer({
     const looksZip =
       /\.zip$/i.test(file.originalname || '') ||
       ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip'].includes(file.mimetype);
-    if (!looksZip) return cb(new Error('Dozwolone są wyłącznie pliki .zip'));
+    if (!looksZip) return cb(Object.assign(new Error('Dozwolone są wyłącznie pliki .zip'), { status: 400 }));
     cb(null, true);
   },
 });
@@ -765,7 +787,20 @@ async function prepareEntry(project, text, email) {
   return processed;
 }
 
+/**
+ * Wpis jest już zapisany – błąd przy zapisie uczestników nie może kończyć
+ * żądania błędem (piszący wysłałby komentarz drugi raz). Logujemy go tylko.
+ */
 async function registerParticipants(project, entry, author, email, notifyList) {
+  try {
+    return await saveParticipants(project, entry, author, email, notifyList);
+  } catch (err) {
+    console.error('[notify] nie udało się zapisać uczestników wątku:', err);
+    return null;
+  }
+}
+
+async function saveParticipants(project, entry, author, email, notifyList) {
   let token = null;
   if (!notify.status().participants) return token;
   // Adres administratora (NOTIFY_EMAIL) pomijamy – wzmianki i odpowiedzi
@@ -1123,15 +1158,25 @@ app.use((req, res) => {
   res.status(404).type('html').send('<h1>404</h1>');
 });
 
-// Obsługa błędów (m.in. multer: za duży plik, zły typ).
+/**
+ * Obsługa błędów: komunikat po polsku dla użytkownika, szczegóły w logu.
+ * Błędy przewidziane (za duży plik, zły typ, uszkodzone dane) – 4xx,
+ * pozostałe – 500 bez wewnętrznych szczegółów.
+ */
+function describeError(err) {
+  if (err && err.code === 'LIMIT_FILE_SIZE') return [413, 'Plik jest zbyt duży (limit 50 MB).'];
+  if (err && err.type === 'entity.too.large') return [413, 'Za duże dane żądania.'];
+  if (err && err.type === 'entity.parse.failed') return [400, 'Nieprawidłowe dane żądania.'];
+  if (err && err.name === 'MulterError') return [400, 'Nieprawidłowe przesłanie pliku.'];
+  if (err && err.status >= 400 && err.status < 500 && err.message) return [err.status, err.message];
+  return [500, 'Wystąpił nieoczekiwany błąd serwera. Spróbuj ponownie za chwilę.'];
+}
+
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  const msg =
-    err && err.code === 'LIMIT_FILE_SIZE'
-      ? 'Plik jest zbyt duży (limit 50 MB).'
-      : (err && err.message) || 'Nieoczekiwany błąd.';
-  const status = err && err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-  console.error('[error]', msg);
+  const [status, msg] = describeError(err);
+  if (status >= 500) console.error('[error]', req.method, req.originalUrl, err);
+  else console.error('[error]', msg);
   if (req.path.startsWith('/api/')) return res.status(status).json({ error: msg });
   res.status(status).type('text').send(msg);
 });
