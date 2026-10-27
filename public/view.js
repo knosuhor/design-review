@@ -5,6 +5,8 @@
 const $ = (sel) => document.querySelector(sel);
 const NS = 'design-review';
 const NAME_KEY = 'design-review:name';
+const EMAIL_KEY = 'design-review:email';
+const UNSUBSCRIBE_KEY = 'design-review:unsubscribe:'; // + id projektu → token wypisania
 const FILTER_KEY = 'design-review:hide-resolved';
 
 const pathParts = location.pathname.split('/').filter(Boolean);
@@ -25,6 +27,9 @@ const formKind = $('#form-kind');
 const formQuote = $('#form-quote');
 const formError = $('#form-error');
 const authorInput = $('#author');
+const emailInput = $('#email');
+const emailField = $('.email-field');
+const unsubscribeBtn = $('#unsubscribe');
 const textInput = $('#text');
 const submitBtn = $('#submit-comment');
 const cancelBtn = $('#cancel-comment');
@@ -61,7 +66,8 @@ let concealedIds = new Set(); // miejsca, które są teraz ukryte (akordeon, zak
 let hideResolved = localStorage.getItem(FILTER_KEY) === '1';
 let toastTimer = null;
 let replyOpenId = null;   // komentarz, na który właśnie odpowiadamy
-let replyDraft = { author: '', text: '' }; // treść formularza odpowiedzi (przetrwa przebudowę listy)
+let emailNotifications = false; // czy serwer wysyła powiadomienia uczestnikom (pole e-mail)
+let replyDraft = { author: '', email: '', text: '' }; // formularz odpowiedzi (przetrwa przebudowę listy)
 let replyFocusPending = false; // ustaw fokus w formularzu odpowiedzi po jego otwarciu
 
 // Połączenie z warstwą adnotacji w ramce.
@@ -479,8 +485,64 @@ function replaceComment(updated) {
   if (idx !== -1) comments[idx] = updated;
 }
 
+/* ------------------------ powiadomienia uczestników ------------------------ */
+
+function savedEmail() {
+  return localStorage.getItem(EMAIL_KEY) || '';
+}
+
+/** Przycisk „Wypisz się” – widoczny, gdy ta przeglądarka zapisała się do powiadomień. */
+function updateUnsubscribe() {
+  unsubscribeBtn.hidden = !(emailNotifications && localStorage.getItem(UNSUBSCRIBE_KEY + projectId));
+}
+
+/**
+ * Po dodaniu komentarza lub odpowiedzi: zapamiętaj imię i e-mail, token do
+ * wypisania się i powiedz piszącemu, kogo wzmianki powiadomiły, a kogo nie.
+ */
+function afterPost(data, author, email, message) {
+  localStorage.setItem(NAME_KEY, author);
+  if (emailNotifications) {
+    if (email) localStorage.setItem(EMAIL_KEY, email);
+    else localStorage.removeItem(EMAIL_KEY);
+  }
+  if (data.subscription && data.subscription.token) {
+    localStorage.setItem(UNSUBSCRIBE_KEY + projectId, data.subscription.token);
+    updateUnsubscribe();
+  }
+  const m = data.mentions || {};
+  const parts = [message];
+  if (m.notified && m.notified.length) parts.push(`Powiadomiono: ${m.notified.join(', ')}`);
+  if (m.skipped && m.skipped.length) parts.push(`Nie powiadomiono: ${m.skipped.join(', ')} – adres spoza dozwolonych domen`);
+  toast(parts.join('. ') + (parts.length > 1 ? '.' : ''), Boolean(m.skipped && m.skipped.length));
+}
+
+unsubscribeBtn.addEventListener('click', async () => {
+  const token = localStorage.getItem(UNSUBSCRIBE_KEY + projectId);
+  if (!token) return updateUnsubscribe();
+  const ok = await drConfirm({
+    title: 'Wypisać się z powiadomień?',
+    message: 'Nie będziesz dostawać maili o odpowiedziach i wzmiankach z tego projektu. '
+      + 'Podanie adresu przy kolejnym komentarzu zapisze Cię ponownie.',
+    confirmText: 'Wypisz się',
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch('/unsubscribe/' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok && res.status !== 404) throw new Error(`Błąd ${res.status}`);
+    localStorage.removeItem(UNSUBSCRIBE_KEY + projectId);
+    updateUnsubscribe();
+    toast('Wypisano z powiadomień tego projektu');
+  } catch {
+    toast('Nie udało się wypisać – spróbuj ponownie', true);
+  }
+});
+
 function openReply(id) {
-  if (replyOpenId !== id) replyDraft = { author: '', text: '' };
+  if (replyOpenId !== id) replyDraft = { author: '', email: '', text: '' };
   replyOpenId = id;
   replyFocusPending = true;
   renderList();
@@ -488,7 +550,7 @@ function openReply(id) {
 
 function closeReply() {
   replyOpenId = null;
-  replyDraft = { author: '', text: '' };
+  replyDraft = { author: '', email: '', text: '' };
   renderList();
 }
 
@@ -508,6 +570,20 @@ function renderReplyForm(comment, focusField, caret) {
   name.dataset.replyField = 'author';
   name.value = replyDraft.author || savedName;
   name.addEventListener('input', () => { replyDraft.author = name.value; });
+
+  const email = document.createElement('input');
+  email.type = 'email';
+  email.maxLength = 200;
+  email.placeholder = 'E-mail (opcjonalnie)';
+  email.title = 'Podaj, jeśli chcesz dostawać powiadomienia o odpowiedziach w tym wątku';
+  email.dataset.replyField = 'email';
+  email.value = replyDraft.email || savedEmail();
+  email.hidden = !emailNotifications;
+  email.addEventListener('input', () => { replyDraft.email = email.value; });
+
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  row.append(name, email);
 
   const text = document.createElement('textarea');
   text.rows = 2;
@@ -543,6 +619,7 @@ function renderReplyForm(comment, focusField, caret) {
     e.preventDefault();
     const author = name.value.trim();
     const body = text.value.trim();
+    const mail = emailNotifications ? email.value.trim() : '';
     if (!author) { error.hidden = false; error.textContent = 'Podaj nazwę.'; name.focus(); return; }
     if (!body) { error.hidden = false; error.textContent = 'Wpisz treść odpowiedzi.'; text.focus(); return; }
     submit.disabled = true;
@@ -550,14 +627,13 @@ function renderReplyForm(comment, focusField, caret) {
       const data = await api(`/api/projects/${projectId}/comments/${comment.id}/replies`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ author, text: body }),
+        body: JSON.stringify({ author, email: mail || undefined, text: body }),
       });
-      localStorage.setItem(NAME_KEY, author);
       replaceComment(data.comment);
       replyOpenId = null;
-      replyDraft = { author: '', text: '' };
+      replyDraft = { author: '', email: '', text: '' };
       renderList();
-      toast('Odpowiedź dodana');
+      afterPost(data, author, mail, 'Odpowiedź dodana');
     } catch (err) {
       error.hidden = false;
       error.textContent = err.message;
@@ -565,12 +641,13 @@ function renderReplyForm(comment, focusField, caret) {
     }
   });
 
-  form.append(name, text, error, actions);
+  form.append(row, text, error, actions);
 
   // Fokus tylko po otwarciu formularza albo gdy miał go przed przebudową
   // listy – inaczej przebudowa zabierałaby go z innych pól.
   if (focusField || replyFocusPending) {
-    const target = focusField === 'author' || (!focusField && !name.value) ? name : text;
+    const target = focusField === 'author' || (!focusField && !name.value) ? name
+      : focusField === 'email' ? email : text;
     replyFocusPending = false;
     setTimeout(() => {
       target.focus();
@@ -638,6 +715,7 @@ function openForm(request, previewText) {
 
   const saved = localStorage.getItem(NAME_KEY) || '';
   if (saved && !authorInput.value) authorInput.value = saved;
+  if (emailNotifications && !emailInput.value) emailInput.value = savedEmail();
 
   (authorInput.value.trim() ? textInput : authorInput).focus();
 }
@@ -656,6 +734,7 @@ form.addEventListener('submit', async (e) => {
 
   const author = authorInput.value.trim();
   const text = textInput.value.trim();
+  const email = emailNotifications ? emailInput.value.trim() : '';
   if (!author) { formError.hidden = false; formError.textContent = 'Podaj nazwę.'; authorInput.focus(); return; }
   if (!text) { formError.hidden = false; formError.textContent = 'Wpisz treść komentarza.'; textInput.focus(); return; }
 
@@ -668,6 +747,7 @@ form.addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         author,
+        email: email || undefined,
         text,
         type: pending.kind,
         page: pending.page || currentPage,
@@ -676,7 +756,6 @@ form.addEventListener('submit', async (e) => {
       }),
     });
 
-    localStorage.setItem(NAME_KEY, author);
     comments.push(data.comment);
     activeId = data.comment.id;
     renderMeta();
@@ -685,7 +764,7 @@ form.addEventListener('submit', async (e) => {
     closeForm(true);
     authorInput.value = author;
     if (mode === 'pin') setMode('select'); // nie zostawiaj włączonego trybu pinezki
-    toast('Komentarz dodany');
+    afterPost(data, author, email, 'Komentarz dodany');
 
     const el = listEl.querySelector(`[data-id="${data.comment.id}"]`);
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -946,6 +1025,9 @@ async function init() {
   try {
     const data = await api(`/api/projects/${projectId}`);
     project = data.project;
+    emailNotifications = Boolean(data.emailNotifications);
+    emailField.hidden = !emailNotifications;
+    updateUnsubscribe();
     comments = data.comments || [];
     activeId = null;
     missingIds = new Set();

@@ -10,6 +10,8 @@ const fsp = fs.promises;
 const store = require('./lib/store');
 const auth = require('./lib/auth');
 const notify = require('./lib/notify');
+const mentions = require('./lib/mentions');
+const subscribers = require('./lib/subscribers');
 const { extractZip, detectEntry, packDir } = require('./lib/zip');
 const mime = require('./lib/mime');
 
@@ -416,7 +418,12 @@ app.post('/api/projects', auth.requireAuthApi, upload.single('file'), async (req
 
 app.get('/api/projects/:id', requireProjectAccessApi, async (req, res) => {
   const comments = await store.readComments(req.project.id);
-  res.json({ project: projectDto(req.project), comments: commentsWithPage(comments, req.project) });
+  res.json({
+    project: projectDto(req.project),
+    comments: commentsWithPage(comments, req.project),
+    // Czy pokazywać recenzentom pole e-mail (powiadomienia o odpowiedziach).
+    emailNotifications: notify.status().participants,
+  });
 });
 
 /**
@@ -584,6 +591,7 @@ app.patch('/api/projects/:id', auth.requireAuthApi, async (req, res) => {
 app.delete('/api/projects/:id', auth.requireAuthApi, async (req, res) => {
   const removed = await store.removeProject(req.params.id);
   if (!removed) return res.status(404).json({ error: 'Projekt nie istnieje.' });
+  await subscribers.remove(req.params.id);
   res.json({ ok: true });
 });
 
@@ -709,9 +717,64 @@ async function resolveCommentPage(project, raw) {
   return norm.split(path.sep).join('/');
 }
 
-/** Uzupełnia brakujące pole `page` w komentarzach zapisanych przed tą zmianą. */
+/**
+ * Komentarz w postaci dla API: uzupełnia brakujące pole `page` (komentarze
+ * sprzed podstron) i usuwa adresy e-mail – komentarze widzi każdy z linkiem.
+ */
+function publicComment(c, project) {
+  const { email, mentions, ...rest } = c; // eslint-disable-line no-unused-vars
+  if (!rest.page) rest.page = project.entry;
+  if (Array.isArray(rest.replies)) {
+    rest.replies = rest.replies.map((r) => {
+      const { email: e, mentions: m, ...publicReply } = r; // eslint-disable-line no-unused-vars
+      return publicReply;
+    });
+  }
+  return rest;
+}
+
 function commentsWithPage(comments, project) {
-  return comments.map((c) => (c.page ? c : Object.assign({}, c, { page: project.entry })));
+  return comments.map((c) => publicComment(c, project));
+}
+
+/**
+ * Opcjonalny adres do powiadomień: '' gdy pusty, null gdy niepoprawny.
+ * Bez skonfigurowanej wysyłki pole jest ignorowane (nie zapisujemy adresów,
+ * których i tak nie użyjemy).
+ */
+function parseOptionalEmail(raw) {
+  if (!notify.status().participants) return '';
+  if (raw == null || String(raw).trim() === '') return '';
+  return mentions.normalizeEmail(raw) || null;
+}
+
+/**
+ * Wspólna część dodawania komentarza i odpowiedzi: wzmianki w treści
+ * (adresy zamienione na imiona) i zapis uczestników do powiadomień.
+ */
+async function prepareEntry(project, text, email) {
+  const comments = await store.readComments(project.id);
+  const processed = mentions.processMentions(text, {
+    participants: mentions.participantsOf(comments),
+    selfEmail: email,
+  });
+  // Bez wysyłki wzmianki tylko ukrywają adresy – nikogo nie powiadamiamy.
+  if (!notify.status().participants) Object.assign(processed, { notify: [], notified: [], skipped: [] });
+  return processed;
+}
+
+async function registerParticipants(project, entry, author, email, notifyList) {
+  let token = null;
+  if (!notify.status().participants) return token;
+  if (email) token = await subscribers.subscribe(project.id, email, author, entry.createdAt);
+  for (const address of notifyList) {
+    await subscribers.addMentioned(project.id, address, mentions.shortName(address), entry.createdAt);
+  }
+  return token;
+}
+
+function mentionSummary(processed) {
+  return { notified: processed.notified, skipped: processed.skipped };
 }
 
 app.get('/api/projects/:id/comments', requireProjectAccessApi, async (req, res) => {
@@ -724,12 +787,14 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
 
   const body = req.body || {};
   const author = clampStr(body.author, 60);
-  const text = clampStr(body.text, 4000);
+  const rawText = clampStr(body.text, 4000);
   const type = body.type === 'pin' ? 'pin' : body.type === 'text' ? 'text' : null;
+  const email = parseOptionalEmail(body.email);
 
   if (!author) return res.status(400).json({ error: 'Podaj nazwę.' });
-  if (!text) return res.status(400).json({ error: 'Treść komentarza nie może być pusta.' });
+  if (!rawText) return res.status(400).json({ error: 'Treść komentarza nie może być pusta.' });
   if (!type) return res.status(400).json({ error: 'Nieznany typ komentarza.' });
+  if (email === null) return res.status(400).json({ error: 'Nieprawidłowy adres e-mail.' });
 
   const anchor = type === 'pin' ? parsePinAnchor(body.anchor) : parseTextAnchor(body.anchor);
   if (!anchor) return res.status(400).json({ error: 'Nieprawidłowe zakotwiczenie komentarza.' });
@@ -737,10 +802,11 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
   const page = await resolveCommentPage(project, body.page);
   if (!page) return res.status(400).json({ error: 'Nieprawidłowa strona komentarza.' });
 
+  const processed = await prepareEntry(project, rawText, email);
   const comment = {
     id: store.newId(),
     author,
-    text,
+    text: processed.text,
     type,
     page,
     anchor,
@@ -750,11 +816,18 @@ app.post('/api/projects/:id/comments', requireProjectAccessApi, async (req, res)
   // ID wpisu WordPressa – komentarz trafia na swoją podstronę także po zmianie jej adresu.
   const postId = Number(body.postId);
   if (isUrlProject(project) && Number.isSafeInteger(postId) && postId > 0) comment.postId = postId;
-  // Komentarze właściciela (zalogowanego uid-em) nie wyzwalają powiadomień.
+  // Komentarze właściciela (zalogowanego uid-em) nie wyzwalają powiadomień administratora.
   if (auth.isAuthed(req)) comment.byOwner = true;
+  if (email) comment.email = email;
+  if (processed.notify.length) comment.mentions = processed.notify;
   await store.addComment(project.id, comment);
+  const token = await registerParticipants(project, comment, author, email, processed.notify);
   notify.commentAdded(project.id);
-  res.status(201).json({ comment });
+  res.status(201).json({
+    comment: publicComment(comment, project),
+    mentions: mentionSummary(processed),
+    subscription: token ? { token } : null,
+  });
 });
 
 app.patch('/api/projects/:id/comments/:commentId', requireProjectAccessApi, async (req, res) => {
@@ -762,14 +835,15 @@ app.patch('/api/projects/:id/comments/:commentId', requireProjectAccessApi, asyn
   const patch = {};
   if (typeof (req.body || {}).resolved === 'boolean') patch.resolved = req.body.resolved;
   if (typeof (req.body || {}).text === 'string') {
-    const text = clampStr(req.body.text, 4000);
+    // Przy zmianie treści adresy też zamieniamy na imiona (bez nowych powiadomień).
+    const text = (await prepareEntry(project, clampStr(req.body.text, 4000), '')).text;
     if (!text) return res.status(400).json({ error: 'Treść komentarza nie może być pusta.' });
     patch.text = text;
   }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Brak zmian.' });
   const updated = await store.updateComment(project.id, req.params.commentId, patch);
   if (!updated) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
-  res.json({ comment: commentsWithPage([updated], project)[0] });
+  res.json({ comment: publicComment(updated, project) });
 });
 
 app.delete('/api/projects/:id/comments/:commentId', requireProjectAccessApi, async (req, res) => {
@@ -785,24 +859,81 @@ app.post('/api/projects/:id/comments/:commentId/replies', requireProjectAccessAp
   const project = req.project;
   const body = req.body || {};
   const author = clampStr(body.author, 60);
-  const text = clampStr(body.text, 4000);
+  const rawText = clampStr(body.text, 4000);
+  const email = parseOptionalEmail(body.email);
   if (!author) return res.status(400).json({ error: 'Podaj nazwę.' });
-  if (!text) return res.status(400).json({ error: 'Treść odpowiedzi nie może być pusta.' });
+  if (!rawText) return res.status(400).json({ error: 'Treść odpowiedzi nie może być pusta.' });
+  if (email === null) return res.status(400).json({ error: 'Nieprawidłowy adres e-mail.' });
 
-  const reply = { id: store.newId(), author, text, createdAt: Date.now() };
-  // Odpowiedzi właściciela (zalogowanego uid-em) nie wyzwalają powiadomień.
+  const processed = await prepareEntry(project, rawText, email);
+  const reply = { id: store.newId(), author, text: processed.text, createdAt: Date.now() };
+  // Odpowiedzi właściciela (zalogowanego uid-em) nie wyzwalają powiadomień administratora.
   if (auth.isAuthed(req)) reply.byOwner = true;
+  if (email) reply.email = email;
+  if (processed.notify.length) reply.mentions = processed.notify;
   const comment = await store.addReply(project.id, req.params.commentId, reply);
   if (!comment) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
+  const token = await registerParticipants(project, reply, author, email, processed.notify);
   notify.commentAdded(project.id);
-  res.status(201).json({ reply, comment: commentsWithPage([comment], project)[0] });
+  res.status(201).json({
+    reply: publicComment(reply, project),
+    comment: publicComment(comment, project),
+    mentions: mentionSummary(processed),
+    subscription: token ? { token } : null,
+  });
 });
 
 app.delete('/api/projects/:id/comments/:commentId/replies/:replyId', requireProjectAccessApi, async (req, res) => {
   const comment = await store.deleteReply(req.project.id, req.params.commentId, req.params.replyId);
   if (comment === null) return res.status(404).json({ error: 'Komentarz nie istnieje.' });
   if (comment === false) return res.status(404).json({ error: 'Odpowiedź nie istnieje.' });
-  res.json({ ok: true, comment: commentsWithPage([comment], req.project)[0] });
+  res.json({ ok: true, comment: publicComment(comment, req.project) });
+});
+
+/* --------------------- wypisanie z powiadomień (uczestnicy) --------------- */
+
+function unsubscribePage(title, message, action) {
+  return '<!doctype html><html lang="pl"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + `<title>${escapeAttr(title)} – Design Review</title><link rel="stylesheet" href="/styles.css"></head>`
+    + '<body><main class="wrap" style="max-width:520px;padding-top:12vh">'
+    + `<section class="card" style="padding:1.5rem"><h1 style="font-size:1.2rem;margin:0 0 .5rem">${escapeAttr(title)}</h1>`
+    + `<p class="muted" style="margin:0 0 1rem">${escapeAttr(message)}</p>`
+    + (action ? `<form method="post"><button class="btn primary" type="submit">${escapeAttr(action)}</button></form>` : '')
+    + '</section></main></body></html>';
+}
+
+/**
+ * Link „Wypisz się” z maila. GET tylko pokazuje potwierdzenie (skanery
+ * linków w poczcie nie wypiszą nikogo przypadkiem), wypisuje POST – także
+ * jednym kliknięciem z nagłówka List-Unsubscribe.
+ */
+app.get('/unsubscribe/:token', async (req, res) => {
+  const found = await subscribers.findToken(req.params.token);
+  res.setHeader('Cache-Control', 'no-store');
+  if (!found) {
+    return res.status(404).type('html').send(unsubscribePage('Nieznany link', 'Ten link do wypisania się jest nieaktualny.'));
+  }
+  const project = store.getProject(found.projectId);
+  const name = project ? `„${project.name}”` : 'tego projektu';
+  if (found.unsubscribed) {
+    return res.type('html').send(unsubscribePage('Wypisano', `Nie dostajesz już powiadomień z projektu ${name}.`));
+  }
+  res.type('html').send(unsubscribePage('Wypisać się z powiadomień?',
+    `Nie będziesz dostawać maili o odpowiedziach i wzmiankach z projektu ${name}.`, 'Wypisz się'));
+});
+
+app.post('/unsubscribe/:token', async (req, res) => {
+  const result = await subscribers.unsubscribe(req.params.token);
+  const wantsJson = /json/.test(String(req.headers.accept || ''));
+  if (!result) {
+    if (wantsJson) return res.status(404).json({ error: 'Nieznany link do wypisania się.' });
+    return res.status(404).type('html').send(unsubscribePage('Nieznany link', 'Ten link do wypisania się jest nieaktualny.'));
+  }
+  if (wantsJson) return res.json({ ok: true });
+  const project = store.getProject(result.projectId);
+  res.type('html').send(unsubscribePage('Wypisano',
+    `Nie dostajesz już powiadomień z projektu ${project ? `„${project.name}”` : ''}.`));
 });
 
 /* ------------------------- serwowanie plików strony ----------------------- */

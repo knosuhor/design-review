@@ -709,6 +709,8 @@ async function main() {
   const delAgain = await realFetch(`${BASE}/api/projects/${project.id}/comments/${parent.comment.id}/replies/${r1.reply.id}`, { method: 'DELETE' });
   check('usunięta odpowiedź już nie istnieje (404)', delAgain.status === 404);
 
+  await participantTests(project);
+
   await notificationTests();
 
   console.log('\n6. Sprzątanie');
@@ -830,6 +832,148 @@ async function notificationTests() {
   check('mail testowy tylko dla zalogowanego (401)', anonTest.status === 401, String(anonTest.status));
 
   await fetch(`${BASE}/api/projects/${pid}`, { method: 'DELETE' });
+}
+
+/**
+ * E-mail uczestników i wzmianki. Część API działa zawsze; maile sprawdzamy
+ * tylko w trybie MAIL_TRANSPORT=log z krótkimi czasami, a wzmianki adresem
+ * z dozwolonej domeny – gdy serwer ma MENTION_DOMAINS z example.com, np.:
+ *   MENTION_DOMAINS=example.com MAIL_TRANSPORT=log NOTIFY_EMAIL=test@example.com \
+ *   NOTIFY_QUIET_MS=1500 NOTIFY_MAX_MS=4000 NOTIFY_TICK_MS=250 npm start
+ */
+async function participantTests(project) {
+  console.log('\n5h. E-mail uczestników i wzmianki');
+  const status = await (await fetch(`${BASE}/api/notifications`)).json();
+  const post = (body, path) => realFetch(`${BASE}/api/projects/${project.id}/comments${path || ''}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ type: 'pin', page: 'index.html', anchor: { x: 1, y: 1 } }, body)),
+  });
+
+  const projectInfo = await (await fetch(`${BASE}/api/projects/${project.id}`)).json();
+  check('widok wie, czy pokazać pole e-mail', projectInfo.emailNotifications === status.participants,
+    `${projectInfo.emailNotifications} vs ${status.participants}`);
+
+  if (status.participants) {
+    check('nieprawidłowy e-mail odrzucony (400)',
+      (await post({ author: 'Ewa', text: 'x', email: 'to-nie-mail' })).status === 400);
+  }
+  const withEmailRes = await post({ author: 'Ewa K', text: 'Komentarz z adresem', email: 'Ewa.K@Other.test' });
+  const withEmail = await withEmailRes.json();
+  check('komentarz z e-mailem (201)', withEmailRes.status === 201, JSON.stringify(withEmail));
+  check('odpowiedź API nie zawiera adresu', !JSON.stringify(withEmail.comment).includes('@'), JSON.stringify(withEmail.comment));
+  if (status.participants) {
+    check('zwrócono token do wypisania się', withEmail.subscription && /^[a-f0-9]+\./.test(withEmail.subscription.token || ''),
+      JSON.stringify(withEmail.subscription));
+  }
+
+  const unknown = await (await post({ author: 'Ola', text: 'Pytanie do @jan.obcy@nieznana.test' })).json();
+  check('obcy adres zamieniony na imię', unknown.comment.text === 'Pytanie do @Jan', JSON.stringify(unknown));
+
+  if (!status.participants) {
+    check('bez wysyłki adres w formularzu jest ignorowany (bez tokenu)', !withEmail.subscription);
+    check('bez wysyłki wzmianki nikogo nie powiadamiają',
+      unknown.mentions.notified.length === 0 && unknown.mentions.skipped.length === 0);
+    console.log('  – powiadomienia uczestników pominięte (brak skonfigurowanej wysyłki)');
+    return;
+  }
+
+  const viaParticipant = await (await post({ author: 'Ola', text: 'Co myślisz, @ewa.k@other.test?' })).json();
+  check('wzmianka adresem uczestnika → jego imię', viaParticipant.comment.text === 'Co myślisz, @Ewa K?', viaParticipant.comment.text);
+  check('uczestnik na liście powiadomionych', JSON.stringify(viaParticipant.mentions.notified) === '["Ewa K"]',
+    JSON.stringify(viaParticipant.mentions));
+  check('obcy adres bez powiadomienia (na liście pominiętych)', JSON.stringify(unknown.mentions.skipped) === '["Jan"]',
+    JSON.stringify(unknown.mentions));
+
+  if ((status.mentionDomains || []).includes('example.com')) {
+    const allowed = await (await post({ author: 'Ola', text: 'Zobacz @adam.adamowski@example.com' })).json();
+    check('adres z dozwolonej domeny → pierwszy człon z wielkiej litery',
+      allowed.comment.text === 'Zobacz @Adam' && JSON.stringify(allowed.mentions.notified) === '["Adam"]',
+      JSON.stringify(allowed));
+  } else {
+    console.log('  – wzmianki z dozwolonej domeny pominięte (brak MENTION_DOMAINS=example.com)');
+  }
+
+  const list = JSON.stringify((await (await fetch(`${BASE}/api/projects/${project.id}/comments`)).json()).comments);
+  check('lista komentarzy bez adresów e-mail', !/other\.test|nieznana\.test|example\.com/.test(list));
+
+  const replyRes = await post({ author: 'Bartek', text: 'Odpowiedź z adresem', email: 'bartek@other.test' }, `/${withEmail.comment.id}/replies`);
+  const replyJson = await replyRes.json();
+  check('odpowiedź z e-mailem bez adresu w API',
+    replyRes.status === 201 && !JSON.stringify(replyJson.comment).includes('bartek@'), JSON.stringify(replyJson.comment));
+
+  if (withEmail.subscription) {
+    const token = withEmail.subscription.token;
+    const page = await realFetch(`${BASE}/unsubscribe/${encodeURIComponent(token)}`);
+    check('link „Wypisz się” pokazuje potwierdzenie (GET bez zmian)',
+      page.status === 200 && /Wypisz się/.test(await page.text()));
+    check('nieznany token (404)', (await realFetch(`${BASE}/unsubscribe/abc123.nieznany`)).status === 404);
+  }
+
+  if (status.transport !== 'log' || (status.quietMinutes || 1) * 60000 > 10000) {
+    console.log('  – maile do uczestników pominięte (serwer nie działa w trybie MAIL_TRANSPORT=log z krótkimi czasami)');
+    return;
+  }
+
+  // Osobny projekt – czysty stan powiadomień.
+  const quiet = status.quietMinutes * 60000;
+  const OUTBOX = path.join(__dirname, '..', 'data', 'outbox');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const mailsTo = (to, needle) => {
+    let files = [];
+    try { files = fs.readdirSync(OUTBOX).filter((f) => f.endsWith('.json')); } catch { return []; }
+    return files
+      .map((f) => JSON.parse(fs.readFileSync(path.join(OUTBOX, f), 'utf8')))
+      .filter((m) => m.to === to && String(m.subject).includes(needle))
+      .sort((a, b) => a.sentAt - b.sentAt);
+  };
+  const name = 'Smoke uczestnicy ' + Date.now().toString(36);
+  const p2 = (await (await fetch(`${BASE}/api/projects/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: 'https://example.com/', name }),
+  })).json()).project;
+  const add = (body, path) => realFetch(`${BASE}/api/projects/${p2.id}/comments${path || ''}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ type: 'pin', page: '/', anchor: { x: 1, y: 1 } }, body)),
+  }).then((r) => r.json());
+
+  const root = await add({ author: 'Anna', text: 'Wątek testowy', email: 'anna@ext.test' });
+  await add({ author: 'Bartek', text: 'Pierwsza odpowiedź' }, `/${root.comment.id}/replies`);
+  await sleep(quiet + 1200);
+  const annaMails = mailsTo('anna@ext.test', name);
+  check('autor wątku dostaje maila o odpowiedzi', annaMails.length === 1 && /1 nowa odpowiedź/.test(annaMails[0].subject),
+    JSON.stringify(annaMails.map((m) => m.subject)));
+  const annaMail = annaMails[0] || {};
+  check('mail ma link do wypisania się i nagłówek List-Unsubscribe',
+    /\/unsubscribe\//.test(annaMail.text || '') && /unsubscribe/.test(JSON.stringify(annaMail.headers || {})));
+  check('mail wskazuje komentarz', (annaMail.text || '').includes(`/v/${p2.id}?c=${root.comment.id}`));
+
+  await add({ author: 'Celina', text: 'Dołączam do wątku', email: 'celina@ext.test' }, `/${root.comment.id}/replies`);
+  await sleep(quiet + 1200);
+  check('nowy uczestnik nie dostaje maila o własnej odpowiedzi', mailsTo('celina@ext.test', name).length === 0);
+  check('autor dostaje maila o odpowiedzi nowego uczestnika', mailsTo('anna@ext.test', name).length === 2);
+
+  await add({ author: 'Anna', text: 'Dzięki @adam.nowak@example.com', email: 'anna@ext.test' }, `/${root.comment.id}/replies`);
+  await sleep(quiet + 1200);
+  check('uczestnik wątku dostaje maila o odpowiedzi autora', mailsTo('celina@ext.test', name).length === 1);
+  const adamMails = mailsTo('adam.nowak@example.com', name);
+  check('wspomniany adres z dozwolonej domeny dostaje maila o wzmiance',
+    adamMails.length === 1 && /wzmianka o Tobie/.test(adamMails[0].subject), JSON.stringify(adamMails.map((m) => m.subject)));
+  check('autor nie dostaje maila o własnej odpowiedzi', mailsTo('anna@ext.test', name).length === 2);
+
+  const unsub = await realFetch(`${BASE}/unsubscribe/${encodeURIComponent(root.subscription.token)}`, {
+    method: 'POST', headers: { Accept: 'application/json' },
+  });
+  check('wypisanie się tokenem (200)', unsub.status === 200, String(unsub.status));
+  await add({ author: 'Bartek', text: 'Po wypisaniu' }, `/${root.comment.id}/replies`);
+  await sleep(quiet + 1200);
+  check('wypisany nie dostaje kolejnych maili', mailsTo('anna@ext.test', name).length === 2);
+  check('pozostali uczestnicy dostają', mailsTo('celina@ext.test', name).length === 2);
+  check('administrator nie dostaje maili uczestnika', mailsTo(status.to, 'wzmian').length === 0);
+
+  await fetch(`${BASE}/api/projects/${p2.id}`, { method: 'DELETE' });
 }
 
 main().catch((err) => {

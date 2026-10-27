@@ -145,7 +145,7 @@ code {
   color: var(--accent);
 }
 
-input[type="text"], input[type="search"], input[type="password"], input[type="url"], textarea {
+input[type="text"], input[type="search"], input[type="password"], input[type="url"], input[type="email"], textarea {
   font: inherit;
   color: var(--text);
   background: var(--panel);
@@ -766,6 +766,11 @@ body.viewer { overflow: hidden; }
 }
 .comment-foot button:hover { color: var(--text); text-decoration: underline; }
 .comment-foot button.del:hover { color: var(--danger); }
+/* Imię i (opcjonalny) e-mail w jednym wierszu formularza. */
+.field-row { display: flex; gap: .5rem; }
+.field-row > * { flex: 1; min-width: 0; }
+.comment-form .field-row label { margin-bottom: .5rem; }
+
 /* Odpowiedzi – wcięte pod komentarzem, z linią po lewej. */
 .replies {
   list-style: none;

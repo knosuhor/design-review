@@ -85,6 +85,7 @@ Konfiguracja (zmienne środowiskowe; bez `NOTIFY_EMAIL` powiadomienia są wyłą
 | `SMTP_PASS` | hasło – dla Gmaila **hasło aplikacji** (16 znaków) |
 | `SMTP_HOST` / `SMTP_PORT` | domyślnie `smtp.gmail.com` / `465` (587 = STARTTLS) |
 | `MAIL_FROM` | nadawca, domyślnie `SMTP_USER` |
+| `MENTION_DOMAINS` | dozwolone domeny wzmianek, np. `learnetic.com` (kilka po przecinku) |
 | `PUBLIC_URL` | adres aplikacji do linków w mailach (zalecane) |
 
 Firmowy Gmail (Google Workspace):
@@ -108,6 +109,42 @@ którym właściciel ostatnio otworzył aplikację (zapamiętanego w `data/notif
 Tryb testowy: `MAIL_TRANSPORT=log` zapisuje maile do `data/outbox/` zamiast
 je wysyłać. Czasy można skrócić zmiennymi `NOTIFY_QUIET_MS`, `NOTIFY_MAX_MS`
 i `NOTIFY_TICK_MS` (zob. sekcja **Testy**).
+
+### Powiadomienia dla uczestników wątków
+
+Gdy SMTP jest skonfigurowany (nawet bez `NOTIFY_EMAIL`), w formularzu komentarza
+i odpowiedzi obok imienia pojawia się pole **„E-mail (opcjonalnie)”**:
+
+- kto poda adres, dostaje maile o **nowych odpowiedziach w całym wątku**
+  (komentarz i wszystkie odpowiedzi pod nim) – poza własnymi wpisami,
+- uczestnikami wątku są autor komentarza, każdy, kto odpowiedział z adresem,
+  i osoby wspomniane we wpisach,
+- maile są zbierane tak samo jak u administratora (4 / 15 minut), jeden na
+  osobę i projekt; limit: 10 maili na dobę na adres i 60 na godzinę łącznie,
+- przeglądarka zapamiętuje adres jak imię; adresy **nie są widoczne** w API
+  ani na stronie – trzymane są osobno w `data/subscribers/<projekt>.json`.
+
+**Wzmianki** – w treści `@adres@domena`:
+
+- adres z dozwolonej domeny (`MENTION_DOMAINS`, np. `learnetic.com`, kilka po
+  przecinku) albo adres, który uczestnik projektu sam podał – ta osoba dostaje
+  maila i dołącza do wątku,
+- w zapisanym tekście **nie ma adresów, tylko imiona**: adres z dozwolonej
+  domeny zmienia się w pierwszy człon z wielkiej litery
+  (`@adam.adamowski@learnetic.com` → `@Adam`), adres uczestnika – w jego imię,
+- inny adres też zmienia się w imię, ale bez powiadomienia – piszący widzi
+  komunikat „Nie powiadomiono: …”.
+
+**Wypisanie się:**
+
+- każdy mail ma link **„Wypisz się”** (oraz nagłówek `List-Unsubscribe`
+  z wypisaniem jednym kliknięciem w kliencie poczty); link otwiera stronę
+  z potwierdzeniem, więc skanery linków w poczcie nikogo nie wypiszą,
+- w widoku recenzji obok „Zaloguj” pojawia się przycisk **🔕 Wypisz się**
+  (gdy ta przeglądarka podała adres w tym projekcie) – zachowuje się jak
+  pozostałe przyciski paska,
+- wypisanie dotyczy całego projektu; podanie adresu przy kolejnym komentarzu
+  zapisuje ponownie, a wzmianka wypisanej osoby nie zapisuje jej z powrotem.
 
 ## Logowanie i dostęp
 
@@ -391,7 +428,9 @@ lib/store.js           magazyn danych (pliki JSON na dysku)
 lib/auth.js            logowanie uid-em + ochrona strony głównej
 lib/zip.js             bezpieczne rozpakowywanie ZIP, wykrywanie pliku startowego i pakowanie archiwum
 lib/mime.js            mapa typów MIME
-lib/notify.js          powiadomienia mailowe o nowych komentarzach (zbieranie i wysyłka)
+lib/notify.js          powiadomienia mailowe (administrator i uczestnicy wątków)
+lib/mentions.js        wzmianki @adres – zamiana na imiona i wybór adresów do powiadomienia
+lib/subscribers.js     adresy uczestników wątków, tokeny wypisania i stan ich powiadomień
 public/index.html      strona główna (lista stron, upload)
 public/app.js          logika strony głównej
 public/login.html      ekran logowania (jedno pole: uid)
@@ -431,11 +470,13 @@ sample/landing.zip     przykładowa strona do testów
 | `GET` | `/api/projects/:id` | publiczny\* | szczegóły strony + komentarze |
 | `GET` | `/api/projects/:id/archive` | publiczny\* | archiwum ZIP z plikami strony (bez komentarzy); nie dotyczy stron na żywo |
 | `GET` | `/api/projects/:id/comments` | publiczny\* | lista komentarzy |
-| `POST` | `/api/projects/:id/comments` | publiczny\* | dodanie komentarza |
+| `POST` | `/api/projects/:id/comments` | publiczny\* | dodanie komentarza (opcjonalnie `email` – powiadomienia o odpowiedziach); zwraca `mentions` i `subscription` |
 | `PATCH` | `/api/projects/:id/comments/:commentId` | publiczny\* | zmiana treści / statusu „rozwiązany” |
 | `DELETE` | `/api/projects/:id/comments/:commentId` | publiczny\* | usunięcie komentarza |
-| `POST` | `/api/projects/:id/comments/:commentId/replies` | publiczny\* | odpowiedź na komentarz (`{ "author": "…", "text": "…" }`) |
+| `POST` | `/api/projects/:id/comments/:commentId/replies` | publiczny\* | odpowiedź na komentarz (`{ "author": "…", "email": "…", "text": "…" }`, e-mail opcjonalny); zwraca `mentions` i `subscription` |
 | `DELETE` | `/api/projects/:id/comments/:commentId/replies/:replyId` | publiczny\* | usunięcie odpowiedzi |
+| `GET` | `/unsubscribe/:token` | publiczny | strona potwierdzenia wypisania się z powiadomień projektu |
+| `POST` | `/unsubscribe/:token` | publiczny | wypisanie się (HTML albo JSON przy `Accept: application/json`; także List-Unsubscribe-Post) |
 | `GET` | `/v/:id` | publiczny\* | widok recenzji (`?c=<id komentarza>` – otwiera jego podstronę i wyróżnia go) |
 | `GET` | `/p/:id/...` | publiczny\* | pliki wgranej strony |
 
@@ -509,7 +550,7 @@ plików, zachowanie komentarzy i hasła, odrzucenie błędnego archiwum),
 hasło dostępu do strony (blokada widoku,
 plików i API, błędne/poprawne hasło, unieważnienie po zmianie), strony na żywo
 (walidacja adresu, skrypt do wklejenia bez wersji, klucze podstron, ID wpisu,
-odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, zmiana nazwy projektu, odpowiedzi na komentarze, nagłówki cache warstwy
+odrzucanie obcych domen i kluczy wskazujących inny host, zmiana adresu strony, zmiana nazwy projektu, odpowiedzi na komentarze, e-mail uczestników i wzmianki, nagłówki cache warstwy
 adnotacji, kotwice Elementora, brak ZIP-a i plików pod `/p/`) oraz
 zabezpieczenie przed path traversal. Uid do logowania bierze z `data/config.json`
 (albo ze zmiennej `ADMIN_UID`).
@@ -520,7 +561,7 @@ tylko na serwerze w trybie zapisu do pliku z krótkimi czasami – w innym
 przypadku są pomijane:
 
 ```bash
-MAIL_TRANSPORT=log NOTIFY_EMAIL=test@example.com NOTIFY_QUIET_MS=1500 NOTIFY_MAX_MS=4000 NOTIFY_TICK_MS=250 npm start
+MENTION_DOMAINS=example.com MAIL_TRANSPORT=log NOTIFY_EMAIL=test@example.com NOTIFY_QUIET_MS=1500 NOTIFY_MAX_MS=4000 NOTIFY_TICK_MS=250 npm start
 ```
 
 ## Bezpieczeństwo i ograniczenia

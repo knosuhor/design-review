@@ -16,6 +16,11 @@
       <span class="btn-ico" id="home-ico" aria-hidden="true">←</span>
       <span class="btn-label" id="home-label">Wszystkie strony</span>
     </a>
+    <button class="btn ghost" id="unsubscribe" type="button" hidden
+            title="Wypisz się z powiadomień mailowych tego projektu" aria-label="Wypisz się z powiadomień">
+      <span class="btn-ico" aria-hidden="true">🔕</span>
+      <span class="btn-label">Wypisz się</span>
+    </button>
     <div class="viewer-title">
       <div class="t" id="project-name">Wczytywanie…</div>
       <div class="s" id="project-meta"></div>
@@ -78,10 +83,16 @@
       <form class="comment-form" id="comment-form" hidden autocomplete="off">
         <div class="fh" id="form-kind">Nowy komentarz</div>
         <div class="quote" id="form-quote"></div>
-        <label>
-          <span>Twoje imię</span>
-          <input id="author" type="text" maxlength="60" placeholder="np. Anna" required>
-        </label>
+        <div class="field-row">
+          <label>
+            <span>Twoje imię</span>
+            <input id="author" type="text" maxlength="60" placeholder="np. Anna" required>
+          </label>
+          <label class="email-field" hidden>
+            <span>E-mail (opcjonalnie)</span>
+            <input id="email" type="email" maxlength="200" placeholder="powiadomienia o odpowiedziach" autocomplete="email">
+          </label>
+        </div>
         <label>
           <span>Komentarz</span>
           <textarea id="text" maxlength="4000" rows="3" placeholder="Co warto poprawić?" required></textarea>
