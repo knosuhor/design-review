@@ -778,9 +778,11 @@ function parseOptionalEmail(raw, req) {
  */
 async function prepareEntry(project, text, email) {
   const comments = await store.readComments(project.id);
+  const entries = await subscribers.read(project.id);
   const processed = mentions.processMentions(text, {
     participants: mentions.participantsOf(comments),
     selfEmail: email,
+    undeliverable: new Set(Object.keys(entries).filter((e) => entries[e].undeliverable)),
   });
   // Bez wysyłki wzmianki tylko ukrywają adresy – nikogo nie powiadamiamy.
   if (!notify.status().participants) Object.assign(processed, { notify: [], notified: [], skipped: [] });

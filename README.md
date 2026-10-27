@@ -115,7 +115,8 @@ i `NOTIFY_TICK_MS` (zob. sekcja **Testy**).
 ### Powiadomienia dla uczestników wątków
 
 Gdy SMTP jest skonfigurowany (nawet bez `NOTIFY_EMAIL`), w formularzu komentarza
-i odpowiedzi obok imienia pojawia się pole **„E-mail (opcjonalnie)”**:
+i odpowiedzi obok imienia pojawia się pole **„E-mail (opcjonalnie)”**
+(w polu podpowiedź „Do powiadomień”):
 
 - kto poda adres, dostaje maile o **nowych odpowiedziach w całym wątku**
   (komentarz i wszystkie odpowiedzi pod nim) – poza własnymi wpisami,
@@ -141,6 +142,20 @@ i odpowiedzi obok imienia pojawia się pole **„E-mail (opcjonalnie)”**:
   komunikat „Nie powiadomiono: …”,
 - imiona autorów i wzmianki `@Imię` w treści są wyróżnione kolorem
   (`#C0C0FF` w ciemnym motywie, ciemniejszy fiolet `#4B4BC8` w jasnym).
+
+**Błędny adres** (np. literówka we wzmiance):
+
+- jeśli serwer poczty od razu odrzuci adres (kod 5xx), aplikacja przestaje do
+  niego pisać, a administrator dostaje w zwykłym powiadomieniu notkę
+  „Nie udało się powiadomić: …” z tym adresem (sama notka idzie od razu, gdy
+  nie ma nowych komentarzy); kolejne wzmianki tego adresu kończą się
+  komunikatem „Nie powiadomiono”, a wpisanie go przez autora w polu e-mail
+  odblokowuje go,
+- Gmail zwykle przyjmuje każdy adres i dopiero później odsyła **zwrot
+  („Address not found”) na konto nadawcy** (`SMTP_USER`) – z treścią maila
+  do wspomnianej osoby. Aplikacja tego zwrotu nie widzi. Żeby nie trafiał do
+  skrzynki administratora, wysyłaj z osobnego konta (np. `design-review@…`),
+  a `NOTIFY_EMAIL` ustaw na adres administratora.
 
 **Wypisanie się:**
 
