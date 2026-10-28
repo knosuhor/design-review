@@ -635,6 +635,15 @@ body.viewer { overflow: hidden; }
 
 .sidebar-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 
+.sidebar-foot {
+  flex: none;
+  padding: .6rem 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: center;
+}
+.sidebar-foot .btn { width: 100%; justify-content: center; }
+
 .hint {
   margin: .9rem 1rem;
   padding: .7rem .85rem;

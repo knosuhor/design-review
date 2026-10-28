@@ -13,6 +13,7 @@ const notify = require('./lib/notify');
 const mentions = require('./lib/mentions');
 const subscribers = require('./lib/subscribers');
 const { extractZip, detectEntry, packDir } = require('./lib/zip');
+const agentExport = require('./lib/agent-export');
 const mime = require('./lib/mime');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -642,6 +643,22 @@ function parseElementorAnchor(eid) {
   return { id, n, rel };
 }
 
+/**
+ * Opis elementu zapisany przez przeglądarkę przy dodawaniu komentarza –
+ * tylko do eksportu dla agenta (selektor CSS, fragment kodu, nagłówek sekcji).
+ */
+function parseContext(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null;
+  const parsed = {};
+  const selector = clampStr(ctx.selector, 500);
+  const snippet = clampStr(ctx.snippet, 600);
+  const heading = clampStr(ctx.heading, 200);
+  if (selector) parsed.selector = selector;
+  if (snippet) parsed.snippet = snippet;
+  if (heading) parsed.heading = heading;
+  return Object.keys(parsed).length ? parsed : null;
+}
+
 function parsePinTarget(target) {
   if (!target || typeof target !== 'object') return null;
   const xpath = clampStr(target.xpath, 2000);
@@ -669,6 +686,8 @@ function parsePinAnchor(a) {
   };
   const target = parsePinTarget(a.target);
   if (target) anchor.target = target;
+  const context = parseContext(a.context);
+  if (context) anchor.context = context;
   return anchor;
 }
 
@@ -692,6 +711,8 @@ function parseTextAnchor(a) {
   const endEid = parseElementorAnchor(a.endEid);
   if (startEid) anchor.startEid = startEid;
   if (endEid) anchor.endEid = endEid;
+  const context = parseContext(a.context);
+  if (context) anchor.context = context;
   return anchor;
 }
 
@@ -819,6 +840,19 @@ async function saveParticipants(project, entry, author, email, notifyList) {
 function mentionSummary(processed) {
   return { notified: processed.notified, skipped: processed.skipped };
 }
+
+/** Nierozwiązane komentarze jako instrukcja dla agenta AI (Markdown) – tylko dla właściciela. */
+app.get('/api/projects/:id/agent-export', auth.requireAuthApi, async (req, res) => {
+  const project = store.getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Nie znaleziono strony.' });
+  const comments = commentsWithPage(await store.readComments(project.id), project);
+  const text = await agentExport.buildExport(project, comments, {
+    siteDir: isUrlProject(project) ? null : store.siteDir(project.id),
+    entry: project.entry,
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('text/markdown; charset=utf-8').send(text);
+});
 
 app.get('/api/projects/:id/comments', requireProjectAccessApi, async (req, res) => {
   const comments = await store.readComments(req.project.id);

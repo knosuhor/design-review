@@ -442,6 +442,38 @@ z `data-id` oznaczone przez Elementor (`data-element_type`, `data-e-type` albo
 klasa `elementor-element`). Komentarze zapisane wcześniej, bez `eid`, działają
 jak dotąd.
 
+## Eksport komentarzy dla agenta AI
+
+W widoku recenzji zalogowany właściciel ma na dole panelu przycisk
+**„🤖 Kopiuj dla agenta AI”**. Kopiuje on do schowka tekst w Markdown, który
+można wkleić agentowi (np. Claude Code) jako zadanie:
+
+- na początku instrukcja: wprowadź zmiany, odpowiedzi doprecyzowują prośbę
+  (późniejsze mają pierwszeństwo), zmieniaj tylko wskazane miejsca, pytaj, gdy
+  coś jest niejasne, na koniec wypisz numery zrealizowanych komentarzy,
+- potem **nierozwiązane** komentarze ze **wszystkich stron** projektu,
+  pogrupowane według plików lub podstron, z odpowiedziami,
+- przy każdym komentarzu jest wskazane miejsce:
+  - **projekt ZIP:** plik, **numer linii** i **fragment kodu** z pliku
+    źródłowego (serwer odnajduje zapisaną ścieżkę w HTML-u przetworzonym przez
+    `parse5`, tak jak robi to przeglądarka – działa też dla starych
+    komentarzy), krótki **selektor CSS** z klasami (np.
+    `div.cta-row > a.btn:nth-of-type(2)`) i najbliższy nagłówek sekcji;
+    element dodany przez skrypt strony nie ma linii – wtedy wskazany jest
+    najbliższy element nadrzędny, który jest w pliku,
+  - **strona na żywo:** adres podstrony, ID wpisu WordPressa, `data-id`
+    Elementora oraz selektor, fragment kodu i nagłówek zapisane przez
+    przeglądarkę przy dodawaniu komentarza (selektor zaczyna się od
+    `[data-id="…"]`, gdy element leży w elemencie Elementora); starsze
+    komentarze mają selektor wyliczony z samej ścieżki, bez klas,
+  - zaznaczony tekst (komentarze do tekstu) albo punkt kliknięcia w elemencie
+    (pinezki).
+
+W selektorach pomijane są klasy, które nic nie mówią: techniczne klasy
+Elementora (`elementor-element-…`, `e-con`, `e-atomic-element`…), generowane
+(`e-107c0af7-9ae0`, skróty w stylu CSS Modules) i stany (`is-active`, `open`).
+Ten sam tekst zwraca `GET /api/projects/:id/agent-export` (tylko po zalogowaniu).
+
 ## Struktura projektu
 
 ```
@@ -453,6 +485,7 @@ lib/mime.js            mapa typów MIME
 lib/notify.js          powiadomienia mailowe (administrator i uczestnicy wątków)
 lib/mentions.js        wzmianki @adres – zamiana na imiona i wybór adresów do powiadomienia
 lib/subscribers.js     adresy uczestników wątków, tokeny wypisania i stan ich powiadomień
+lib/agent-export.js    eksport nierozwiązanych komentarzy dla agenta AI (Markdown, linie z plików ZIP)
 public/index.html      strona główna (lista stron, upload)
 public/app.js          logika strony głównej
 public/login.html      ekran logowania (jedno pole: uid)
@@ -492,6 +525,7 @@ sample/landing.zip     przykładowa strona do testów
 | `GET` | `/api/projects/:id` | publiczny\* | szczegóły strony + komentarze |
 | `GET` | `/api/projects/:id/archive` | publiczny\* | archiwum ZIP z plikami strony (bez komentarzy); nie dotyczy stron na żywo |
 | `GET` | `/api/projects/:id/comments` | publiczny\* | lista komentarzy |
+| `GET` | `/api/projects/:id/agent-export` | **tylko zalogowany** | nierozwiązane komentarze jako instrukcja dla agenta AI (`text/markdown`) |
 | `POST` | `/api/projects/:id/comments` | publiczny\* | dodanie komentarza (opcjonalnie `email` – powiadomienia o odpowiedziach); zwraca `mentions` i `subscription` |
 | `PATCH` | `/api/projects/:id/comments/:commentId` | publiczny\* | zmiana treści / statusu „rozwiązany” |
 | `DELETE` | `/api/projects/:id/comments/:commentId` | publiczny\* | usunięcie komentarza |

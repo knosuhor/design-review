@@ -713,6 +713,149 @@
   }
 
   /* --------------------------------------------------------------------- */
+  /*  Opis elementu dla eksportu do agenta AI                              */
+  /* --------------------------------------------------------------------- */
+
+  /*
+   * Przy dodawaniu komentarza zapisujemy krótki opis wskazanego elementu:
+   * najkrótszy jednoznaczny selektor CSS (z klasami, które coś znaczą),
+   * fragment kodu i najbliższy nagłówek. Agent znajduje po nich miejsce
+   * w kodzie strony. Ustawianie pinezek dalej opiera się na XPath i data-id.
+   */
+  var NOISE_CLASS_RE = [
+    /^elementor-(element|section|column|container|top-|inner|widget-wrap|widget-container|repeater-item|invisible|motion|kit|\d)/,
+    /^e-(con|atomic|div-block|default|flex|grid|parent|child|lazyloaded|[0-9a-f]{4,})/,
+    /^(css|sc|jsx|svelte|emotion|tw)-[A-Za-z0-9]+$/,
+    /^(is|has)-/,
+    /^(active|current|open|show|shown|hidden|visible|animated|lazyloaded|loaded|selected|focus|hover)$/,
+    /-(active|current|visible|hidden|open|duplicate|cloned)$/
+  ];
+  var IDENT_RE = /^-?[A-Za-z_][A-Za-z0-9_-]*$/;
+  var SNIPPET_MAX = 300;
+
+  function meaningfulClasses(el) {
+    var out = [];
+    var list = el.classList || [];
+    for (var i = 0; i < list.length && out.length < 2; i++) {
+      var c = list[i];
+      if (!IDENT_RE.test(c) || c.length > 40) continue;
+      if (/\d/.test(c) && /[0-9a-f]{6,}/i.test(c)) continue;
+      var noise = false;
+      for (var j = 0; j < NOISE_CLASS_RE.length; j++) if (NOISE_CLASS_RE[j].test(c)) { noise = true; break; }
+      if (!noise) out.push(c);
+    }
+    return out;
+  }
+
+  function uniqueMatch(selector, el) {
+    try {
+      var found = doc.querySelectorAll(selector);
+      return found.length === 1 && found[0] === el;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function segmentFor(el) {
+    var tag = el.nodeName.toLowerCase();
+    var base = tag + meaningfulClasses(el).map(function (c) { return '.' + c; }).join('');
+    var parent = el.parentElement;
+    if (!parent) return base;
+    var sameTag = 0;
+    var index = 0;
+    var clash = false;
+    for (var k = parent.firstElementChild; k; k = k.nextElementSibling) {
+      if (k.nodeName !== el.nodeName) continue;
+      sameTag++;
+      if (k === el) index = sameTag;
+      else if (!clash) { try { clash = k.matches(base); } catch (e) { clash = true; } }
+    }
+    return clash ? base + ':nth-of-type(' + index + ')' : base;
+  }
+
+  /** Najkrótszy jednoznaczny selektor – zakotwiczony w id, elemencie Elementora albo <body>. */
+  function cssSelectorFor(el) {
+    var segs = [];
+    var rootIsAnchor = false;
+    var rootIsElementor = false;
+    for (var cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+      var id = cur.getAttribute('id');
+      if (id && IDENT_RE.test(id) && doc.querySelectorAll('#' + id).length === 1) {
+        segs.unshift('#' + id); rootIsAnchor = true; break;
+      }
+      if (isElementorElement(cur) && EID_RE.test(cur.getAttribute('data-id'))) {
+        segs.unshift('[data-id="' + cur.getAttribute('data-id') + '"]'); rootIsAnchor = rootIsElementor = true; break;
+      }
+      if (cur === doc.body || cur === doc.documentElement) { segs.unshift(cur.nodeName.toLowerCase()); break; }
+      segs.unshift(segmentFor(cur));
+    }
+    var candidates = [];
+    for (var i = segs.length - 1; i >= 0; i--) {
+      // data-id Elementora zostaje zawsze – po nim agent znajdzie element w edytorze.
+      if (!rootIsElementor || i === 0) candidates.push(segs.slice(i).join(' > '));
+      if (i > 1 && rootIsAnchor) candidates.push(segs[0] + ' ' + segs.slice(i).join(' > '));
+    }
+    candidates.sort(function (a, b) { return a.length - b.length; });
+    for (var c = 0; c < candidates.length; c++) if (uniqueMatch(candidates[c], el)) return candidates[c];
+    // Powtórzony data-id (Loop Grid, globalny widżet) – selektor nie będzie
+    // jednoznaczny; numer wystąpienia jest w kotwicy Elementora.
+    return segs.join(' > ');
+  }
+
+  function squash(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function startTag(el) {
+    var tag = el.nodeName.toLowerCase();
+    var parts = ['<' + tag];
+    for (var i = 0; i < el.attributes.length; i++) {
+      var a = el.attributes[i];
+      var value = a.value.length > 80 ? a.value.slice(0, 79) + '…' : a.value;
+      parts.push(a.name + '="' + value.replace(/"/g, '&quot;') + '"');
+    }
+    return parts.join(' ') + '>';
+  }
+
+  function snippetFor(el) {
+    var whole = squash(el.outerHTML);
+    if (whole.length <= SNIPPET_MAX) return whole;
+    var text = squash(el.textContent);
+    if (text.length > 80) text = text.slice(0, 79) + '…';
+    var open = startTag(el);
+    if (open.length > SNIPPET_MAX) open = open.slice(0, SNIPPET_MAX - 2) + '…>';
+    return open + (text || '…') + '</' + el.nodeName.toLowerCase() + '>';
+  }
+
+  function headingFor(el) {
+    var last = '';
+    var list = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i];
+      if (isOurs(h)) continue;
+      var before = h.compareDocumentPosition(el) & 4; // Node.DOCUMENT_POSITION_FOLLOWING
+      if (!before && !h.contains(el)) break;
+      var text = squash(h.textContent);
+      if (text) last = text.length > 100 ? text.slice(0, 99) + '…' : text;
+      if (h.contains(el)) break;
+    }
+    return last;
+  }
+
+  function describeElement(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    if (!el || el.nodeType !== 1) return null;
+    try {
+      var ctx = { selector: cssSelectorFor(el), snippet: snippetFor(el) };
+      var heading = headingFor(el);
+      if (heading) ctx.heading = heading;
+      return ctx;
+    } catch (e) {
+      return null; // opis jest dodatkiem – nie może blokować komentarza
+    }
+  }
+
+  /* --------------------------------------------------------------------- */
   /*  Kotwiczenie pinezek                                                  */
   /* --------------------------------------------------------------------- */
 
@@ -1024,6 +1167,8 @@
     var text = pendingSelection.text;
     var range = pendingSelection.range;
     clearSelectionTip();
+    var context = describeElement(range.startContainer);
+    if (context) anchor.context = context;
     state.pending = { kind: 'text', anchor: anchor, range: range };
     render();
     post('new-anchor', { page: currentPage(), postId: wpPostId(), kind: 'text', anchor: anchor, preview: text });
@@ -1059,7 +1204,11 @@
       docHeight: doc.documentElement.scrollHeight,
     };
     var target = targetForPoint(e.target, e.clientX, e.clientY);
-    if (target) anchor.target = target;
+    if (target) {
+      anchor.target = target;
+      var context = describeElement(resolveNode(target.eid, target.xpath));
+      if (context) anchor.context = context;
+    }
     try {
       var sel = win.getSelection();
       if (sel && sel.removeAllRanges) sel.removeAllRanges();

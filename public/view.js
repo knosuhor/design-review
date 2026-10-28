@@ -41,6 +41,8 @@ const homeLink = $('#home-link');
 const homeIco = $('#home-ico');
 const homeLabel = $('#home-label');
 const resolvedFilter = $('#resolved-filter');
+const agentFoot = $('#agent-foot');
+const agentExportBtn = $('#agent-export');
 const scrollEl = $('#sidebar-scroll');
 const toastEl = $('#toast');
 const lostEl = $('#lost');
@@ -521,6 +523,7 @@ function emailEnabled() {
 
 function applyEmailVisibility() {
   emailField.hidden = !emailEnabled();
+  agentFoot.hidden = !isOwner;
   if (replyOpenId) renderList();
 }
 
@@ -836,6 +839,41 @@ function setMode(next) {
 }
 
 pinToggle.addEventListener('click', () => setMode(mode === 'pin' ? 'select' : 'pin'));
+
+/**
+ * Eksport dla agenta AI. Tekst przygotowuje serwer (dla ZIP dokłada linie
+ * i fragmenty kodu z plików). Safari kopiuje tylko w obsłudze kliknięcia,
+ * więc gdzie się da, przekazujemy schowkowi obietnicę zamiast gotowego tekstu.
+ */
+agentExportBtn.addEventListener('click', async () => {
+  const load = async () => {
+    const res = await drFetch(`/api/projects/${projectId}/agent-export`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Nie udało się przygotować eksportu.');
+    return res.text();
+  };
+  const count = comments.filter((c) => !c.resolved).length;
+  const okMessage = count ? `Skopiowano komentarze dla agenta (${count})` : 'Brak nierozwiązanych komentarzy – skopiowano pustą listę';
+  agentExportBtn.disabled = true;
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write && window.isSecureContext) {
+      let failed = null;
+      const blob = load().then((text) => new Blob([text], { type: 'text/plain' }), (err) => { failed = err; throw err; });
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+        toast(okMessage);
+      } catch (err) {
+        if (failed) throw failed;
+        await copyText(await load(), okMessage); // schowek zablokowany – zapas przez zaznaczenie
+      }
+    } else {
+      await copyText(await load(), okMessage);
+    }
+  } catch (err) {
+    toast(err.message || 'Nie udało się skopiować', true);
+  } finally {
+    agentExportBtn.disabled = false;
+  }
+});
 
 resolvedFilter.addEventListener('click', () => {
   hideResolved = !hideResolved;

@@ -709,6 +709,33 @@ async function main() {
   const delAgain = await realFetch(`${BASE}/api/projects/${project.id}/comments/${parent.comment.id}/replies/${r1.reply.id}`, { method: 'DELETE' });
   check('usunięta odpowiedź już nie istnieje (404)', delAgain.status === 404);
 
+  console.log('\n5i. Eksport dla agenta AI');
+  const ctxRes = await realFetch(`${BASE}/api/projects/${project.id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      author: 'Dorota', text: 'Nagłówek o połowę mniejszy.', type: 'pin', page: 'index.html',
+      anchor: { x: 1, y: 1, target: { xpath: '/body[1]/h1[1]', fx: 0.5, fy: 0.5 },
+        context: { selector: 'body > h1', snippet: '<h1>' + 'x'.repeat(900), heading: 42, extra: 'pominięte' } },
+    }),
+  });
+  const ctxJson = await ctxRes.json();
+  const ctx = (ctxJson.comment && ctxJson.comment.anchor.context) || {};
+  check('opis elementu zapisany i przycięty',
+    ctxRes.status === 201 && ctx.selector === 'body > h1' && ctx.snippet.length <= 600 && !('extra' in ctx),
+    JSON.stringify(ctxJson).slice(0, 200));
+  const anonExport = await realFetch(`${BASE}/api/projects/${project.id}/agent-export`);
+  check('eksport tylko dla zalogowanego (401)', anonExport.status === 401, String(anonExport.status));
+  const exportRes = await fetch(`${BASE}/api/projects/${project.id}/agent-export`);
+  const exportText = await exportRes.text();
+  check('eksport jako Markdown (200)',
+    exportRes.status === 200 && /text\/markdown/.test(exportRes.headers.get('content-type') || ''), String(exportRes.status));
+  check('eksport zaczyna się instrukcją', /^# Poprawki z recenzji/.test(exportText) && exportText.includes('Wprowadź zmiany'));
+  check('eksport pomija rozwiązane komentarze', !exportText.includes(list.comments[0].text));
+  check('eksport wskazuje plik i linię elementu', /Plik: `index\.html`, linia \d+/.test(exportText));
+  check('eksport zawiera fragment kodu z pliku', /```html\n\s*<h1>NOWA WERSJA<\/h1>/.test(exportText));
+  check('eksport zawiera odpowiedzi', exportText.includes('**Właściciel:** Poprawione'));
+
   await participantTests(project);
 
   await notificationTests();
