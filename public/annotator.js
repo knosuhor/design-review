@@ -1113,17 +1113,24 @@
   /* --------------------------------------------------------------------- */
 
   var pendingSelection = null;
+  var touchInput = false;   // ostatnia interakcja palcem/rysikiem
+  var tipPressed = false;   // palec na przycisku „Dodaj komentarz”
+  var selectionTimer = null;
 
   function showTip(rect) {
-    var above = rect.top > 46;
+    // Na ekranie dotykowym nad zaznaczeniem system pokazuje własne menu
+    // (Kopiuj, Udostępnij…), a pod nim uchwyty – przycisk stawiamy niżej.
+    var below = touchInput
+      ? rect.bottom + 70 < win.innerHeight || rect.top <= 46
+      : rect.top <= 46;
     showTipEl();
-    tip.style.left = (rect.left + rect.width / 2) + 'px';
-    if (above) {
+    tip.style.left = Math.min(Math.max(rect.left + rect.width / 2, 70), win.innerWidth - 70) + 'px';
+    if (below) {
+      tip.classList.add('dra-below');
+      tip.style.top = (rect.bottom + (touchInput ? 34 : 12)) + 'px';
+    } else {
       tip.classList.remove('dra-below');
       tip.style.top = Math.max(2, rect.top - 42) + 'px';
-    } else {
-      tip.classList.add('dra-below');
-      tip.style.top = (rect.bottom + 12) + 'px';
     }
   }
 
@@ -1183,6 +1190,21 @@
     if (isOurs(e.target)) return;
     setTimeout(captureSelection, 0);
   }, true);
+
+  /*
+   * Ekrany dotykowe (Android, iOS): zaznaczanie palcem – przytrzymanie
+   * i przeciąganie uchwytów – nie kończy się zdarzeniem mouseup. Reagujemy
+   * na selectionchange, gdy zaznaczenie przestanie się zmieniać.
+   */
+  doc.addEventListener('pointerdown', function (e) {
+    touchInput = e.pointerType === 'touch' || e.pointerType === 'pen';
+  }, true);
+  doc.addEventListener('touchstart', function () { touchInput = true; }, { capture: true, passive: true });
+  doc.addEventListener('selectionchange', function () {
+    if (!connected || !touchInput || tipPressed || state.mode !== 'select') return;
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(captureSelection, 350);
+  });
 
   doc.addEventListener('mousedown', function (e) {
     if (state.mode === 'pin' && !isOurs(e.target)) {
@@ -1294,6 +1316,20 @@
 
     tip.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); }, true);
     tip.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); }, true);
+    // Dotyk: stuknięcie w przycisk nie może skasować zaznaczenia przed
+    // zapisaniem – blokujemy domyślne działanie i dodajemy komentarz od razu.
+    tip.addEventListener('touchstart', function (e) {
+      tipPressed = true;
+      e.preventDefault();
+      e.stopPropagation();
+    }, { capture: true, passive: false });
+    tip.addEventListener('touchend', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      tipPressed = false;
+      commitSelection();
+    }, { capture: true, passive: false });
+    tip.addEventListener('touchcancel', function () { tipPressed = false; }, true);
   }
 
   /* --------------------------------------------------------------------- */

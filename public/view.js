@@ -42,6 +42,7 @@ const homeIco = $('#home-ico');
 const homeLabel = $('#home-label');
 const resolvedFilter = $('#resolved-filter');
 const agentFoot = $('#agent-foot');
+const sidebarEl = $('.sidebar');
 const agentExportBtn = $('#agent-export');
 const scrollEl = $('#sidebar-scroll');
 const toastEl = $('#toast');
@@ -757,6 +758,8 @@ function openForm(request, previewText) {
   if (saved && !authorInput.value) authorInput.value = saved;
   if (emailEnabled() && !emailInput.value) emailInput.value = savedEmail();
 
+  // Na telefonie cały panel się przewija – formularz jest na jego górze.
+  sidebarEl.scrollTop = 0;
   (authorInput.value.trim() ? textInput : authorInput).focus();
 }
 

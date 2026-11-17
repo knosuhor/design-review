@@ -12,11 +12,16 @@
 <header class="topbar">
   <div class="wrap topbar-inner">
     <a class="brand" href="/"><span class="brand-mark">😶‍🌫️</span><span>Design Review</span></a>
-    <span class="tagline">Komentuj design bez logowania</span>
     <div class="account" id="account" hidden>
-      <button class="btn ghost small" type="button" id="mail-test-btn" hidden>✉️ Testowy mail</button>
-      <button class="btn ghost small" type="button" id="uid-btn" title="Skopiuj swój uid (przyda się do logowania)">🔑 Kopiuj uid</button>
-      <button class="btn ghost small" type="button" id="logout-btn" title="Wyloguj się">Wyloguj</button>
+      <button class="btn ghost small" type="button" id="mail-test-btn" hidden aria-label="Testowy mail">
+        <span class="btn-ico" aria-hidden="true">✉️</span><span class="btn-label">Testowy mail</span>
+      </button>
+      <button class="btn ghost small" type="button" id="uid-btn" title="Skopiuj swój uid (przyda się do logowania)" aria-label="Kopiuj uid">
+        <span class="btn-ico" aria-hidden="true">🔑</span><span class="btn-label">Kopiuj uid</span>
+      </button>
+      <button class="btn ghost small" type="button" id="logout-btn" title="Wyloguj się" aria-label="Wyloguj">
+        <span class="btn-ico" aria-hidden="true">🚪</span><span class="btn-label">Wyloguj</span>
+      </button>
     </div>
   </div>
 </header>

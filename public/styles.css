@@ -181,8 +181,9 @@ textarea { resize: vertical; min-height: 76px; }
   gap: 1rem;
   height: 60px;
 }
-.brand { display: flex; align-items: center; gap: .55rem; font-weight: 650; letter-spacing: -.01em; }
+.brand { display: flex; align-items: center; gap: .55rem; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
 .brand-mark {
+  flex: none;
   display: grid;
   place-items: center;
   width: 28px;
@@ -193,8 +194,13 @@ textarea { resize: vertical; min-height: 76px; }
   font-size: 1.02rem;
   line-height: 1;
 }
-.tagline { color: var(--muted); font-size: .85rem; margin-left: auto; }
-.account { display: flex; align-items: center; gap: .35rem; }
+.account { display: flex; align-items: center; gap: .35rem; margin-left: auto; }
+.account .btn { gap: .3rem; }
+/* Wąski ekran: przyciski konta jako same ikony (opis w title/aria-label). */
+@media (max-width: 560px) {
+  .topbar-inner { gap: .6rem; }
+  .account .btn-label { display: none; }
+}
 
 /* -------------------------------- logowanie ------------------------------- */
 
@@ -487,7 +493,7 @@ main.wrap { padding: 2rem 0 4rem; }
 
 body.viewer { overflow: hidden; }
 
-.viewer-shell { display: flex; flex-direction: column; height: 100vh; }
+.viewer-shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 
 .viewer-bar {
   display: flex;
@@ -514,12 +520,6 @@ body.viewer { overflow: hidden; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.bar-hint {
-  font-size: .76rem;
-  color: var(--muted);
-  white-space: nowrap;
-  user-select: none;
 }
 
 /* Wąskie okno: przyciski paska recenzji zamieniają się w same ikony. */
@@ -655,6 +655,7 @@ body.viewer { overflow: hidden; }
   line-height: 1.5;
 }
 .hint b { color: var(--text); font-weight: 600; }
+.hint-short { display: none; }
 
 /* formularz */
 
@@ -862,10 +863,29 @@ body.viewer { overflow: hidden; }
   margin-top: .2rem;
 }
 
+/*
+ * Telefon / wąskie okno: strona na górze, panel komentarzy pod nią – oba
+ * mieszczą się na ekranie, a panel przewija się w całości (nagłówek
+ * przyklejony), niezależnie od ramki ze stroną.
+ */
 @media (max-width: 860px) {
   .viewer-body { flex-direction: column; }
-  .sidebar { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 46vh; }
-  .stage { min-height: 45vh; }
+  .stage { flex: 1 1 0; min-height: 0; }
+  .sidebar {
+    width: auto;
+    height: 48%;
+    flex: none;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .sidebar-scroll { flex: none; overflow: visible; }
+  .sidebar-head { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .55rem 1rem; }
+  .sidebar-foot { margin-top: auto; } /* na końcu listy – przyklejony zasłaniałby formularz */
+  .hint { margin: .6rem 1rem; padding: .5rem .7rem; }
+  .hint-long { display: none; }
+  .hint-short { display: inline; }
   .viewer-title .t { max-width: 30vw; }
   .upload-row { flex-direction: column; }
   .project-item { grid-template-columns: 1fr; }

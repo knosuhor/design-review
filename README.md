@@ -333,9 +333,13 @@ np. po przeniesieniu ze stagingu na produkcję:
   przechodzisz od razu do widoku recenzji (właściciel widzi ją bez hasła),
 - po lewej stronie w `<iframe>` renderowana jest wgrana strona,
 - po prawej panel z komentarzami,
-- **zaznaczenie tekstu** → nad zaznaczeniem pojawia się przycisk „Dodaj komentarz”,
-- **Tryb pinezki** → kliknięcie w dowolnym miejscu stawia pinezkę; obok tego
-  przycisku widnieje podpowiedź **„Zaznacz tekst, aby komentować”**,
+- **zaznaczenie tekstu** → nad zaznaczeniem pojawia się przycisk „Dodaj komentarz”
+  (na telefonie – pod zaznaczeniem, bo nad nim system pokazuje własne menu;
+  zaznaczanie palcem działa na Androidzie i iOS),
+- **Tryb pinezki** → kliknięcie w dowolnym miejscu stawia pinezkę,
+- **telefon / wąskie okno:** strona na górze, panel komentarzy pod nią;
+  oba mieszczą się na ekranie, a panel przewija się niezależnie od strony
+  (podpowiedź skrócona do jednego zdania, przyciski paska jako same ikony),
 - komentarze są przypisane do **konkretnego pliku HTML**. Panel pokazuje wpisy
   z całego projektu — przy komentarzu z innej podstrony widnieje jej nazwa
   (np. `about.html`); kliknięcie takiego wpisu **wczytuje tę podstronę**
